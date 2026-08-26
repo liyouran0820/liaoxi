@@ -53,8 +53,8 @@ struct MainView: View {
                 permissionCard(
                     title: "屏幕录制",
                     granted: model.screenCaptureGranted,
-                    waitingText: "等待授权",
-                    actionTitle: "授权",
+                    waitingText: "点击后打开系统设置",
+                    actionTitle: "打开设置",
                     action: model.requestScreenCapture
                 )
             }

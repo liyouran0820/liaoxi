@@ -42,6 +42,13 @@ final class AppModel: ObservableObject {
 
     func requestScreenCapture() {
         screenCaptureGranted = CGRequestScreenCaptureAccess()
+        guard !screenCaptureGranted else { return }
+
+        if SystemSettingsService().openScreenCapture() {
+            runState = .failed("已打开屏幕录制设置。请打开“聊析”开关，然后按系统提示重新打开应用。")
+        } else {
+            runState = .failed("无法自动打开系统设置。请手动进入“隐私与安全性 → 屏幕与系统音频录制”。")
+        }
     }
 
     func chooseOutputDirectory() {
@@ -64,7 +71,7 @@ final class AppModel: ObservableObject {
             return
         }
         guard screenCaptureGranted else {
-            runState = .failed("请先授予屏幕录制权限，然后重新打开聊析。")
+            runState = .failed("请先打开屏幕录制设置中的“聊析”开关。")
             return
         }
         guard let outputDirectory else {

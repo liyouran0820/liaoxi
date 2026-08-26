@@ -54,5 +54,13 @@ final class ContentProcessorTests: XCTestCase {
             SystemSettingsService.legacyAccessibilityURL.absoluteString,
             "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
         )
+        XCTAssertEqual(
+            SystemSettingsService.screenCaptureURL.absoluteString,
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture"
+        )
+        XCTAssertEqual(
+            SystemSettingsService.legacyScreenCaptureURL.absoluteString,
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        )
     }
 }
