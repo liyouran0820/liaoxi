@@ -44,4 +44,15 @@ final class ContentProcessorTests: XCTestCase {
             ["然后打开终端"]
         )
     }
+
+    func testAccessibilitySettingsDeepLink() {
+        XCTAssertEqual(
+            SystemSettingsService.accessibilityURL.absoluteString,
+            "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
+        )
+        XCTAssertEqual(
+            SystemSettingsService.legacyAccessibilityURL.absoluteString,
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        )
+    }
 }

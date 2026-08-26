@@ -46,11 +46,15 @@ struct MainView: View {
                 permissionCard(
                     title: "辅助功能",
                     granted: model.accessibilityGranted,
+                    waitingText: "点击后打开系统设置",
+                    actionTitle: "打开设置",
                     action: model.requestAccessibility
                 )
                 permissionCard(
                     title: "屏幕录制",
                     granted: model.screenCaptureGranted,
+                    waitingText: "等待授权",
+                    actionTitle: "授权",
                     action: model.requestScreenCapture
                 )
             }
@@ -128,20 +132,26 @@ struct MainView: View {
         }
     }
 
-    private func permissionCard(title: String, granted: Bool, action: @escaping () -> Void) -> some View {
+    private func permissionCard(
+        title: String,
+        granted: Bool,
+        waitingText: String,
+        actionTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
         HStack(spacing: 14) {
             Circle()
                 .fill(granted ? Color(red: 0.13, green: 0.66, blue: 0.36) : Color.orange)
                 .frame(width: 11, height: 11)
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 16, weight: .semibold))
-                Text(granted ? "已允许" : "等待授权")
+                Text(granted ? "已允许" : waitingText)
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
             }
             Spacer()
             if !granted {
-                Button("授权", action: action).buttonStyle(.plain).fontWeight(.bold)
+                Button(actionTitle, action: action).buttonStyle(.plain).fontWeight(.bold)
             }
         }
         .padding(18)

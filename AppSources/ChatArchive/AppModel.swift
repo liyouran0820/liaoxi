@@ -29,7 +29,15 @@ final class AppModel: ObservableObject {
 
     func requestAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        accessibilityGranted = AXIsProcessTrustedWithOptions(options)
+        _ = AXIsProcessTrustedWithOptions(options)
+        accessibilityGranted = AXIsProcessTrusted()
+        guard !accessibilityGranted else { return }
+
+        if SystemSettingsService().openAccessibility() {
+            runState = .failed("已打开辅助功能设置。请打开“聊析”开关，然后返回这里。")
+        } else {
+            runState = .failed("无法自动打开系统设置。请手动进入“隐私与安全性 → 辅助功能”。")
+        }
     }
 
     func requestScreenCapture() {
@@ -52,7 +60,7 @@ final class AppModel: ObservableObject {
     func start() {
         refreshPermissions()
         guard accessibilityGranted else {
-            runState = .failed("请先授予辅助功能权限，然后重新打开聊析。")
+            runState = .failed("请先打开辅助功能设置中的“聊析”开关。")
             return
         }
         guard screenCaptureGranted else {
