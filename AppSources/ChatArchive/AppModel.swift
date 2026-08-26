@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import ScreenCaptureKit
 
 @MainActor
 final class AppModel: ObservableObject {
@@ -41,13 +42,28 @@ final class AppModel: ObservableObject {
     }
 
     func requestScreenCapture() {
-        screenCaptureGranted = CGRequestScreenCaptureAccess()
-        guard !screenCaptureGranted else { return }
+        runState = .working("正在向 macOS 请求屏幕录制权限…")
+        Task {
+            do {
+                _ = try await SCShareableContent.excludingDesktopWindows(
+                    false,
+                    onScreenWindowsOnly: true
+                )
+            } catch {
+                _ = CGRequestScreenCaptureAccess()
+            }
 
-        if SystemSettingsService().openScreenCapture() {
-            runState = .failed("已打开屏幕录制设置。请打开“聊析”开关，然后按系统提示重新打开应用。")
-        } else {
-            runState = .failed("无法自动打开系统设置。请手动进入“隐私与安全性 → 屏幕与系统音频录制”。")
+            refreshPermissions()
+            guard !screenCaptureGranted else {
+                runState = .idle
+                return
+            }
+
+            if SystemSettingsService().openScreenCapture() {
+                runState = .failed("已注册屏幕录制请求。请打开“聊析”开关，然后按系统提示重新打开应用。")
+            } else {
+                runState = .failed("无法自动打开系统设置。请手动进入“隐私与安全性 → 录屏与系统录音”。")
+            }
         }
     }
 

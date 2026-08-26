@@ -38,6 +38,7 @@ open "dist/聊析.app"
 - 不读取微信数据库、登录信息、Token 或 Cookie。
 - 不注入或 Hook 微信进程。
 - 文字优先读取 macOS Accessibility；不可用时使用 Apple Vision 本地 OCR。
+- 屏幕权限通过 ScreenCaptureKit 注册，用途仅限用户主动打开的微信记录窗口。
 - 图片裁切属于启发式识别，需要人工抽查。
 - 文件卡片只记录识别到的文件名，不提取原文件。
 - 自动滚动会把微信置于前台，并短暂移动鼠标指针。
