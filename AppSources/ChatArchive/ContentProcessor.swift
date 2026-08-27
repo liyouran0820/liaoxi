@@ -47,6 +47,44 @@ struct ContentProcessor {
         return (ocr, false)
     }
 
+    func quoteKeys(in pages: [[RecognizedLine]]) -> Set<String> {
+        var result = Set<String>()
+        for page in pages {
+            let lines = page.sorted { lhs, rhs in
+                if abs(lhs.bounds.midY - rhs.bounds.midY) < 0.018 {
+                    return lhs.bounds.minX < rhs.bounds.minX
+                }
+                return lhs.bounds.midY > rhs.bounds.midY
+            }
+            var previousQuoteLine: RecognizedLine?
+            for line in lines {
+                guard line.tone == .muted else {
+                    previousQuoteLine = nil
+                    continue
+                }
+
+                let startsQuote = hasQuoteAttribution(line.text)
+                let continuesQuote: Bool
+                if let previousQuoteLine {
+                    let verticalGap = previousQuoteLine.bounds.minY - line.bounds.maxY
+                    continuesQuote = verticalGap >= -0.01
+                        && verticalGap <= 0.04
+                        && abs(previousQuoteLine.bounds.minX - line.bounds.minX) <= 0.035
+                } else {
+                    continuesQuote = false
+                }
+
+                if startsQuote || continuesQuote {
+                    result.insert(normalized(line.text))
+                    previousQuoteLine = line
+                } else {
+                    previousQuoteLine = nil
+                }
+            }
+        }
+        return result
+    }
+
     func extractAttachments(from pages: [PageCapture]) async throws -> [ExtractedAttachment] {
         var attachments: [ExtractedAttachment] = []
         for (pageIndex, page) in pages.enumerated() {
@@ -122,6 +160,14 @@ struct ContentProcessor {
 
     private func normalized(_ text: String) -> String {
         text.lowercased().filter { !$0.isWhitespace && !$0.isPunctuation }
+    }
+
+    private func hasQuoteAttribution(_ text: String) -> Bool {
+        guard !text.contains("年") || !text.contains("月") else { return false }
+        guard let separator = text.firstIndex(where: { $0 == ":" || $0 == "：" }) else { return false }
+        let name = text[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = text[text.index(after: separator)...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return (1...32).contains(name.count) && !content.isEmpty
     }
 
     private func crop(_ image: CGImage, normalizedRect: CGRect) -> CGImage? {

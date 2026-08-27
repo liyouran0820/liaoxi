@@ -55,6 +55,7 @@ struct ExtractionPipeline {
         let accessibilityLines = processor.mergeAccessibilityPages(accessibilityPages)
         let chosen = processor.chooseText(accessibility: accessibilityLines, ocr: ocrLines)
         guard !chosen.lines.isEmpty else { throw ExtractionError.noContent }
+        let quoteKeys = processor.quoteKeys(in: pages.map(\.lines))
 
         try Task.checkCancellation()
         progress("正在裁切记录中的图片…")
@@ -67,6 +68,7 @@ struct ExtractionPipeline {
             lines: chosen.lines,
             attachments: attachments,
             fileNames: fileNames,
+            quoteKeys: quoteKeys,
             pages: pages.count,
             usedAccessibility: chosen.usedAccessibility,
             to: outputDirectory

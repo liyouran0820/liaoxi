@@ -6,6 +6,7 @@ struct MarkdownExporter {
         lines: [String],
         attachments: [ExtractedAttachment],
         fileNames: [String],
+        quoteKeys: Set<String>,
         pages: Int,
         usedAccessibility: Bool,
         to parentDirectory: URL
@@ -24,7 +25,13 @@ struct MarkdownExporter {
         }
 
         let markdownURL = folder.appendingPathComponent("conversation.md")
-        let markdown = makeMarkdown(lines: lines, attachments: attachments, fileNames: fileNames, usedAccessibility: usedAccessibility)
+        let markdown = makeMarkdown(
+            lines: lines,
+            attachments: attachments,
+            fileNames: fileNames,
+            quoteKeys: quoteKeys,
+            usedAccessibility: usedAccessibility
+        )
         try markdown.write(to: markdownURL, atomically: true, encoding: .utf8)
 
         let reportURL = folder.appendingPathComponent("extraction-report.json")
@@ -34,6 +41,7 @@ struct MarkdownExporter {
             "pageCount": pages,
             "textLineCount": lines.count,
             "imageCount": attachments.count,
+            "quoteLineCount": lines.filter { quoteKeys.contains(markdownKey($0)) }.count,
             "detectedFileNames": fileNames,
             "limitations": [
                 "图片由界面矩形与文字覆盖率启发式识别，请人工抽查。",
@@ -57,6 +65,7 @@ struct MarkdownExporter {
         lines: [String],
         attachments: [ExtractedAttachment],
         fileNames: [String],
+        quoteKeys: Set<String>,
         usedAccessibility: Bool
     ) -> String {
         var result = "# 微信合并聊天记录\n\n"
@@ -64,7 +73,8 @@ struct MarkdownExporter {
         result += "> 文字来源：\(usedAccessibility ? "macOS 辅助功能原文" : "Apple Vision 本地 OCR")\n\n"
         result += "## 对话内容\n\n"
         for line in lines {
-            result += escapeMarkdown(line) + "  \n"
+            let prefix = quoteKeys.contains(markdownKey(line)) ? "> " : ""
+            result += prefix + escapeMarkdown(line) + "  \n"
         }
 
         if !attachments.isEmpty {
@@ -97,5 +107,9 @@ struct MarkdownExporter {
             .replacingOccurrences(of: "*", with: "\\*")
             .replacingOccurrences(of: "_", with: "\\_")
             .replacingOccurrences(of: "`", with: "\\`")
+    }
+
+    private func markdownKey(_ value: String) -> String {
+        value.lowercased().filter { !$0.isWhitespace && !$0.isPunctuation }
     }
 }

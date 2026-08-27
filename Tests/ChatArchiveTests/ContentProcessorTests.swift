@@ -63,4 +63,44 @@ final class ContentProcessorTests: XCTestCase {
             "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
         )
     }
+
+    func testRecognizesMutedAttributedReplyAsQuote() {
+        let lines = [
+            RecognizedLine(text: "NemoArce", bounds: CGRect(x: 0.1, y: 0.8, width: 0.2, height: 0.05), confidence: 1, tone: .muted),
+            RecognizedLine(text: "2026年8月28日 00:09", bounds: CGRect(x: 0.7, y: 0.8, width: 0.2, height: 0.05), confidence: 1, tone: .muted),
+            RecognizedLine(text: "上海的？", bounds: CGRect(x: 0.1, y: 0.65, width: 0.2, height: 0.06), confidence: 1, tone: .primary),
+            RecognizedLine(text: "槐序知安：我的计算能力已经被高中三年计算器毁渣了", bounds: CGRect(x: 0.1, y: 0.53, width: 0.7, height: 0.05), confidence: 1, tone: .muted)
+        ]
+
+        let keys = ContentProcessor().quoteKeys(in: [lines])
+        XCTAssertEqual(keys.count, 1)
+        XCTAssertTrue(keys.contains("槐序知安我的计算能力已经被高中三年计算器毁渣了"))
+    }
+
+    func testMutedTimestampAndSenderAreNotQuotes() {
+        let lines = [
+            RecognizedLine(text: "NemoArce", bounds: .zero, confidence: 1, tone: .muted),
+            RecognizedLine(text: "2026年8月28日 00:09", bounds: .zero, confidence: 1, tone: .muted)
+        ]
+        XCTAssertTrue(ContentProcessor().quoteKeys(in: [lines]).isEmpty)
+    }
+
+    func testMarkdownExporterUsesQuoteBlock() throws {
+        let parent = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ChatArchiveTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: parent) }
+
+        let report = try MarkdownExporter().export(
+            lines: ["这是回复", "张三：这是被引用的原消息"],
+            attachments: [],
+            fileNames: [],
+            quoteKeys: ["张三这是被引用的原消息"],
+            pages: 1,
+            usedAccessibility: false,
+            to: parent
+        )
+        let markdown = try String(contentsOf: report.markdownURL, encoding: .utf8)
+        XCTAssertTrue(markdown.contains("这是回复  \n> 张三：这是被引用的原消息"))
+    }
 }

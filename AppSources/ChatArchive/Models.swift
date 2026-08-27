@@ -1,10 +1,24 @@
 import CoreGraphics
 import Foundation
 
+enum TextTone: Equatable {
+    case primary
+    case muted
+    case unknown
+}
+
 struct RecognizedLine: Equatable {
     let text: String
     let bounds: CGRect
     let confidence: Float
+    let tone: TextTone
+
+    init(text: String, bounds: CGRect, confidence: Float, tone: TextTone = .unknown) {
+        self.text = text
+        self.bounds = bounds
+        self.confidence = confidence
+        self.tone = tone
+    }
 }
 
 struct PageCapture {

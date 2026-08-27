@@ -9,7 +9,7 @@
 - `WindowCaptureService`：用 ScreenCaptureKit 定位和捕获微信可见窗口，驱动滚动。
 - `AccessibilityTextService`：读取微信窗口暴露的辅助功能文本。
 - `OCRService`：以 Apple Vision 在本机识别中英文。
-- `ContentProcessor`：跨屏去重、文字源选择、图片候选裁切和文件名识别。
+- `ContentProcessor`：跨屏去重、文字源选择、灰色回复引用识别、图片候选裁切和文件名识别。
 - `MarkdownExporter`：输出 Markdown、PNG 附件与机器可读提取报告。
 
 ## 文档职责
