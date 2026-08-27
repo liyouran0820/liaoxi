@@ -101,6 +101,15 @@ final class ContentProcessorTests: XCTestCase {
             to: parent
         )
         let markdown = try String(contentsOf: report.markdownURL, encoding: .utf8)
+        let styleGuide = "## 内容样式说明（供 LLM 阅读）\n\n"
+            + "- **正文样式**：不带引用前缀的普通文本，表示当前消息正文。\n"
+            + "- **引用样式**：以 `> ` 开头的 Markdown 引用块，表示微信正文下方灰色的被引用原消息；它是上下文，不是当前发送者的新正文。"
+        XCTAssertTrue(markdown.hasPrefix("# 微信合并聊天记录"))
+        XCTAssertTrue(markdown.contains(styleGuide))
+        XCTAssertLessThan(
+            try XCTUnwrap(markdown.range(of: styleGuide)?.lowerBound),
+            try XCTUnwrap(markdown.range(of: "## 对话内容")?.lowerBound)
+        )
         XCTAssertTrue(markdown.contains("这是回复  \n> 张三：这是被引用的原消息"))
     }
 }

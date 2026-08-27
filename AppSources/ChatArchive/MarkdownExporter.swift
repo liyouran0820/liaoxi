@@ -71,6 +71,9 @@ struct MarkdownExporter {
         var result = "# 微信合并聊天记录\n\n"
         result += "> 提取时间：\(formattedDate())  \n"
         result += "> 文字来源：\(usedAccessibility ? "macOS 辅助功能原文" : "Apple Vision 本地 OCR")\n\n"
+        result += "## 内容样式说明（供 LLM 阅读）\n\n"
+        result += "- **正文样式**：不带引用前缀的普通文本，表示当前消息正文。\n"
+        result += "- **引用样式**：以 `> ` 开头的 Markdown 引用块，表示微信正文下方灰色的被引用原消息；它是上下文，不是当前发送者的新正文。\n\n"
         result += "## 对话内容\n\n"
         for line in lines {
             let prefix = quoteKeys.contains(markdownKey(line)) ? "> " : ""
