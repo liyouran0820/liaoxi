@@ -1,0 +1,56 @@
+name: Prepare release downloads
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Release builds run ID
+        required: true
+      tag:
+        description: Version tag
+        default: v0.2.0
+        required: true
+permissions:
+  actions: read
+  contents: write
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      BUILD_RUN: ${{ inputs.run_id }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate successful build
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_RUN" =~ ^[0-9]+$ ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$BUILD_RUN" > /tmp/build-run.json
+          test "$(jq -r .conclusion /tmp/build-run.json)" = success
+          test "$(jq -r .path /tmp/build-run.json)" = .github/workflows/windows.yml
+          echo "BUILD_SHA=$(jq -r .head_sha /tmp/build-run.json)" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ChatArchive-Windows
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: release
+      - name: Verify artifact receipt and create draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(jq -r .status release/packaged-smoke.json)" = passed
+          test -s release/ChatArchive-Windows-x64.exe
+          unzip -t release/ChatArchive-Windows-x64.zip
+          if gh release view "$RELEASE_TAG" --json isDraft > /tmp/release.json 2>/dev/null; then
+            test "$(jq -r .isDraft /tmp/release.json)" = true
+          else
+            gh release create "$RELEASE_TAG" --draft --target "$BUILD_SHA" --title "聊析 ${RELEASE_TAG#v}" --notes-file "docs/releases/$RELEASE_TAG.md"
+          fi
+          (cd release && sha256sum ChatArchive-Windows-x64.exe ChatArchive-Windows-x64.zip > SHA256SUMS-Windows.txt)
+          mv release/packaged-smoke.json release/Windows-smoke-test.json
+          gh release upload "$RELEASE_TAG" release/ChatArchive-Windows-x64.exe release/ChatArchive-Windows-x64.zip release/SHA256SUMS-Windows.txt release/Windows-smoke-test.json --clobber
+          echo 'Windows assets uploaded to draft. Add the signed macOS assets and checksums before publishing.'
