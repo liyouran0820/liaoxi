@@ -2,6 +2,14 @@
 
 本文件按日期倒序记录实现、验证和已知问题。每次发布或关键行为变化时追加一节，并保留历史记录。
 
+## 2026-10-18 v0.2.0 正式发布
+
+- `main` 已保留双方历史完成合并；`v0.2.0` 指向实际通过双平台构建的提交 `31a0f77`。
+- GitHub Actions `39053722042` 的 macOS 与 Windows 均通过。Windows 原生 OCR / UIA 测试、单文件 EXE 打包、实际 EXE 自检成功；macOS 云端测试与通用包构建成功。
+- 正式 Release：https://github.com/liyouran0820/liaoxi/releases/tag/v0.2.0 ，已发布为非草稿、非预发布版本。
+- 已上传 macOS 通用 DMG / ZIP、Windows x64 EXE / ZIP、SHA-256 校验清单及 Windows 自检回执。正式 Mac 包由本机 Developer ID 签名；未上传签名私钥至 GitHub。
+- macOS 未完成 Apple 公证，Windows 无 Authenticode 签名，发布说明已列明。微信真实附件菜单兼容性仍与实际微信版本有关。
+
 ## 2026-10-18 GitHub 发布
 
 - 保留远端简介及本地开发历史，将完整项目合并并推送至 `liyouran0820/liaoxi` 的 `main`。

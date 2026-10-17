@@ -21,6 +21,8 @@
 
 Mac 可在本机构建、签名、安装并验证。Windows 的导出核心可跨平台测试，原生 UIA / WinRT 与微信实机流程必须在 Windows 验证。`windows/build.ps1` 会先执行含 Windows OCR 的测试，再打包 EXE；仓库中的 Windows CI 仅在关联远端并运行后才产生已构建产物。
 
+0.2.0 已由 GitHub Actions 完成 macOS / Windows 双平台构建，Windows 原生 OCR / UIA 与打包后的 EXE 自检均通过。正式分发包位于 GitHub Releases。真实微信附件菜单的端到端兼容性与微信版本相关，CI 自检不替代该验收。
+
 ## 文档职责
 
 - `PROJECT_INTRODUCTION.md`：维护稳定的产品范围、架构和关键技术决策。
