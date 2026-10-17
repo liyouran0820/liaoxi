@@ -14,16 +14,18 @@ macOS 打开 DMG，将“聊析”拖到 Applications。Windows 下载 EXE 后�
 ## 使用
 
 1. 在微信中多选消息，合并转发给文件传输助手。
-2. 在 Mac 微信里打开这条合并聊天记录，并保持窗口可见。
-3. 打开聊析，授予“辅助功能”和“屏幕录制”权限。
+2. 在电脑端微信（macOS 或 Windows）打开这条合并聊天记录，并保持窗口可见。
+3. 打开对应系统的聊析：macOS 首次使用需授予“辅助功能”和“屏幕录制”权限；Windows 点击“刷新窗口”，选择对应的合并聊天记录窗口。
 4. 选择导出位置。需要保留的本地照片、视频和文档可以通过“补充附件”多选加入。
 5. 点击“开始提取”。程序逐屏读取，并尝试通过微信可见的“另存为”或“复制”菜单保存附件。
 
 提取过程中可以随时点击“停止”；未完成的结果不会写入导出目录。
 
-两个权限的“打开设置”会分别进入“隐私与安全性”中的对应页面。在列表中打开“聊析”开关后返回应用，状态会自动刷新。屏幕录制通常需要重新打开应用，请按系统提示操作。
+**macOS 权限：** 两个权限的“打开设置”会分别进入“隐私与安全性”中的对应页面。在列表中打开“聊析”开关后返回应用，状态会自动刷新。屏幕录制通常需要重新打开应用，请按系统提示操作。
 
 建议使用安装在 `/Applications/聊析.app` 的固定版本。移动应用位置或更换签名会让 macOS 重新请求隐私权限。
+
+**Windows 窗口选择：** 若没有找到记录，请先在微信打开合并记录卡片，再点“刷新窗口”。Windows 无需授予 macOS 的上述两项权限，但需安装中文或英语 OCR 语言功能；操作详情见 [Windows 说明](windows/README.md)。
 
 输出目录包含：
 
@@ -45,18 +47,29 @@ Windows 使用 UI Automation 与 Windows 本地 OCR；Mac 使用 Accessibility �
 
 ## 构建
 
+### macOS
+
 ```bash
 swift test
 ./scripts/build-app.sh
 open "dist/聊析.app"
 ```
 
+### Windows
+
+在 Windows PowerShell 中运行：
+
+```powershell
+cd windows
+./build.ps1
+```
+
 ## 功能与边界
 
 - 不读取微信数据库、登录信息、Token 或 Cookie。
 - 不注入或 Hook 微信进程。
-- 文字优先读取 macOS Accessibility；不可用时使用 Apple Vision 本地 OCR。
-- 屏幕权限通过 ScreenCaptureKit 注册，用途仅限用户主动打开的微信记录窗口。
+- macOS 使用 Accessibility 与 Apple Vision 本地 OCR；Windows 使用 UI Automation 与 Windows 本地 OCR。
+- macOS 屏幕权限通过 ScreenCaptureKit 注册，用途仅限用户主动打开的微信记录窗口；Windows 从用户选择的记录窗口捕获内容。
 - 自动保存仅操作已打开记录的可见附件菜单，不打开执行文档。微信隐藏菜单、过期或未下载的附件可能需要手动另存并补充。
 - 优先另存原附件；图片复制路径保留微信放入剪贴板的图像像素，重新编码为 PNG，不保证与最初上传文件逐字节一致。
 - 微信消息下方的灰色回复原文会输出为 Markdown `>` 引用块。
