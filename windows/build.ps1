@@ -8,7 +8,14 @@ if (-not (Test-Path '.venv/Scripts/python.exe')) {
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 & ./.venv/Scripts/python.exe -m unittest discover -s tests -v
 if ($LASTEXITCODE -ne 0) { throw 'Archive tests failed.' }
-& ./.venv/Scripts/python.exe -m PyInstaller --noconfirm --clean --windowed --onedir --name ChatArchive --collect-all winrt --collect-all comtypes --hidden-import win32timezone app.py
+& ./.venv/Scripts/python.exe -m PyInstaller --noconfirm --clean --windowed --onefile --name ChatArchive-Windows-x64 --collect-all winrt --collect-all comtypes --hidden-import win32timezone app.py
 if ($LASTEXITCODE -ne 0) { throw 'Executable packaging failed.' }
-Compress-Archive -Path './dist/ChatArchive/*' -DestinationPath './dist/ChatArchive-Windows.zip' -Force
-Write-Output 'Ready: dist/ChatArchive/ChatArchive.exe and dist/ChatArchive-Windows.zip'
+$reportPath = Join-Path $PSScriptRoot 'dist/packaged-smoke.json'
+if (Test-Path $reportPath) { Remove-Item $reportPath }
+$smoke = Start-Process -FilePath './dist/ChatArchive-Windows-x64.exe' -ArgumentList @('--self-test', '--self-test-report', ('"' + $reportPath + '"')) -PassThru
+if (-not $smoke.WaitForExit(120000)) { $smoke.Kill(); throw 'Packaged application smoke test timed out.' }
+if ($smoke.ExitCode -ne 0 -or -not (Test-Path $reportPath)) { throw 'Packaged application smoke test failed.' }
+$report = Get-Content $reportPath -Raw | ConvertFrom-Json
+if ($report.status -ne 'passed') { throw 'Packaged OCR / UIA did not pass.' }
+Compress-Archive -Path './dist/ChatArchive-Windows-x64.exe', './README.md' -DestinationPath './dist/ChatArchive-Windows-x64.zip' -Force
+Write-Output 'Ready: dist/ChatArchive-Windows-x64.exe and dist/ChatArchive-Windows-x64.zip'

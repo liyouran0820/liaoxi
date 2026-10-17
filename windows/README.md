@@ -5,14 +5,14 @@
 ## 启动
 
 1. 使用 Windows 10 1903 或更新版本 / Windows 11，x64 架构。
-2. 安装 [Python 3.12 x64](https://www.python.org/downloads/windows/)，保留 Tcl/Tk 和 Python Launcher。
-3. 解压整个启动包，双击 `start.cmd`。首次启动联网下载依赖，之后仍会检查本地依赖是否齐全。
+2. [下载独立 EXE](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-Windows-x64.exe)，直接运行，无需 Python。
+3. 如下载的是源码包，则安装 [Python 3.12 x64](https://www.python.org/downloads/windows/)，保留 Tcl/Tk 和 Python Launcher；解压后双击 `start.cmd`，首次联网安装依赖。
 4. 在微信打开“合并聊天记录”卡片，回到聊析点击“刷新窗口”，选择对应记录。
 5. 选择导出位置；如有已从微信另存的照片、视频、文档，点击“补充附件”多选加入。
 6. 点击“开始提取”。保持微信记录窗口可见，避免提取时移动窗口或操作微信。点击“停止”可以取消。
 7. 完成后点“查看结果”。新生成的文件夹中只有 Markdown 及保存的附件。
 
-启动包包含可运行源码及启动脚本，需要 Python。它不等同于已经打包和实机验证过的独立 EXE。
+发布版 EXE 自带 Python 运行环境。源码启动包与独立 EXE 都使用同一套程序。
 
 ## 已实现
 
@@ -40,11 +40,11 @@
 构建前先安装依赖并运行测试，包括一次本地 OCR 与 UIA 初始化测试。成功后得到：
 
 ```text
-dist/ChatArchive/ChatArchive.exe
-dist/ChatArchive-Windows.zip
+dist/ChatArchive-Windows-x64.exe
+dist/ChatArchive-Windows-x64.zip
 ```
 
-分发 ZIP 中整个目录，不能只复制 EXE。仓库另有 `.github/workflows/windows.yml`，可由 Windows GitHub Actions 执行同一流程；当前没有自动推送或发布。
+EXE 为单文件，可直接分发。打包脚本还会启动实际 EXE，用生成的测试图片检查内置 OCR 与 UIA 模块是否能加载，再生成 ZIP。`.github/workflows/windows.yml` 在版本标签推送或手动触发时完成 Windows 和 macOS 构建；正式发布会使用本地 Developer ID 签名的 macOS 包。
 
 ## 检查
 

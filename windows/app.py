@@ -190,6 +190,26 @@ class App:
 def main():
     if sys.platform != "win32":
         raise SystemExit("这是 Windows 版本，请在 Windows 10/11 上运行。Mac 请打开聊析.app。")
+    if "--self-test" in sys.argv:
+        # Exercise native imports inside the packaged EXE, without touching user chats.
+        import json
+        from PIL import Image, ImageDraw, ImageFont
+        from windows_capture import WeChatCapture
+        backend = WeChatCapture(lambda _: None, threading.Event())
+        try:
+            backend.windows()
+            image = Image.new("RGB", (640, 120), "white")
+            ImageDraw.Draw(image).text((20, 20), "Hello world", fill="black",
+                                      font=ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 40))
+            lines = asyncio.run(backend.recognize(image))
+            if not any("hello" in line.text.lower() for line in lines):
+                raise RuntimeError("Packaged OCR did not recognize the test image")
+            if "--self-test-report" in sys.argv:
+                path = Path(sys.argv[sys.argv.index("--self-test-report") + 1])
+                path.write_text(json.dumps({"status": "passed", "ocr": True, "uia": True}), encoding="utf-8")
+        finally:
+            backend.close()
+        return
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except OSError:

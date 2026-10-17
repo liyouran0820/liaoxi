@@ -1,11 +1,14 @@
-name: Windows build
+name: Release builds
 on:
   workflow_dispatch:
   push:
-    paths: ['windows/**', '.github/workflows/windows.yml']
+    tags: ['v*']
+permissions:
+  contents: read
 jobs:
-  package:
-    runs-on: windows-latest
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,4 +21,24 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ChatArchive-Windows
-          path: windows/dist/ChatArchive-Windows.zip
+          path: |
+            windows/dist/ChatArchive-Windows-x64.exe
+            windows/dist/ChatArchive-Windows-x64.zip
+            windows/dist/packaged-smoke.json
+          if-no-files-found: error
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift tests
+        run: swift test
+      - name: Build universal app and disk image
+        run: zsh scripts/package-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChatArchive-macOS-CI
+          path: |
+            dist/ChatArchive-macOS-universal.dmg
+            dist/ChatArchive-macOS-universal.zip
+          if-no-files-found: error

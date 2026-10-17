@@ -1,6 +1,15 @@
 # 聊析
 
-聊析把微信中已打开的“合并聊天记录”整理为一个可直接移动、分享的文件夹，内含 Markdown、照片、视频和文档。提供原生 macOS 应用及 Windows 启动包。
+聊析｜面向 LLM 的微信聊天记录整理工具，支持 macOS 与 Windows。将合并聊天记录导出为 Markdown，并将照片、视频和文档统一保存在同一文件夹中。
+
+## 一键下载
+
+- [macOS 通用版（DMG，Apple Silicon / Intel）](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-macOS-universal.dmg)
+- [Windows x64 独立版（EXE，无需 Python）](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-Windows-x64.exe)
+- [Windows ZIP 备用下载](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-Windows-x64.zip)
+- [全部版本与校验文件](https://github.com/liyouran0820/liaoxi/releases)
+
+macOS 打开 DMG，将“聊析”拖到 Applications。Windows 下载 EXE 后直接运行。系统 OCR 需已安装中文或英语语言功能。
 
 ## 使用
 
@@ -30,7 +39,7 @@
 
 ## Windows
 
-Windows 10/11 x64，使用 Python 3.12 x64。解压 Windows 启动包后双击 `start.cmd`；首次启动需联网安装依赖。选择打开的微信合并记录窗口、导出位置后开始提取。详见 [Windows 使用与打包说明](windows/README.md)。
+Windows 10/11 x64，发布版独立 EXE 自带运行环境，无需安装 Python。源码启动包仍可通过 Python 3.12 x64 运行 `start.cmd`。详见 [Windows 使用与打包说明](windows/README.md)。
 
 Windows 使用 UI Automation 与 Windows 本地 OCR；Mac 使用 Accessibility 与 Apple Vision。两版共用同样的输出规则与附件语义。原附件能否自动取得取决于微信版本提供的菜单；无法自动保存的附件需在微信另存后使用“补充附件”。
 
