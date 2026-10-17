@@ -15,7 +15,7 @@ else
     codesign --force --sign - "$app_dir"
 fi
 codesign --verify --deep --strict "$app_dir"
-lipo -verify_arch arm64 x86_64 "$app_dir/Contents/MacOS/ChatArchive"
+lipo "$app_dir/Contents/MacOS/ChatArchive" -verify_arch arm64 x86_64
 ditto -c -k --keepParent "$app_dir" "$project_dir/dist/ChatArchive-macOS-universal.zip"
 dmg_temp="$(mktemp -d /private/tmp/chatarchive-dmg.XXXXXX)"
 trap 'rm -f "$dmg_temp/Applications"; rmdir "$dmg_temp"' EXIT
