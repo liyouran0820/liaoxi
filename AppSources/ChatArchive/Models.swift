@@ -39,6 +39,9 @@ struct ExtractionReport: Equatable {
     let imageCount: Int
     let pageCount: Int
     let usedAccessibilityText: Bool
+    var fileCount: Int = 0
+    var videoCount: Int = 0
+    var missingAttachmentCount: Int = 0
 }
 
 enum ExtractionError: LocalizedError {

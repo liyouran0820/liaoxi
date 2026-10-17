@@ -68,7 +68,7 @@ struct MainView: View {
                 VStack(alignment: .leading, spacing: 7) {
                     Text(model.outputDirectory?.lastPathComponent ?? "尚未选择位置")
                         .font(.system(size: 17, weight: .semibold))
-                    Text(model.outputDirectory?.path(percentEncoded: false) ?? "conversation.md 与 attachments 将保存在这里")
+                    Text(model.outputDirectory?.path(percentEncoded: false) ?? "聊天记录与照片、视频、文档保存到同一文件夹")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -81,6 +81,16 @@ struct MainView: View {
             .padding(20)
             .background(.white.opacity(0.76), in: RoundedRectangle(cornerRadius: 20))
             .overlay(RoundedRectangle(cornerRadius: 20).stroke(.black.opacity(0.07)))
+            HStack {
+                Button("补充附件", action: model.chooseAttachments)
+                    .buttonStyle(OutlineButtonStyle())
+                    .disabled(model.isWorking)
+                Text("已选择 \(model.sourceFiles.count) 个原文件")
+                    .foregroundStyle(.secondary)
+                if !model.sourceFiles.isEmpty {
+                    Button("清空") { model.sourceFiles = [] }.disabled(model.isWorking)
+                }
+            }
         }
     }
 
@@ -122,7 +132,7 @@ struct MainView: View {
             }
             .foregroundStyle(.secondary)
         case let .finished(report):
-            Text("已完成：\(report.textLineCount) 行文字，\(report.imageCount) 张图片")
+            Text("已保存：\(report.textLineCount) 行文字，\(report.imageCount) 张照片、\(report.videoCount) 个视频、\(report.fileCount) 个文件\(report.missingAttachmentCount > 0 ? "；请查看文末附件提示" : "")")
                 .foregroundStyle(Color(red: 0.08, green: 0.45, blue: 0.25))
                 .fontWeight(.semibold)
         case let .failed(message):

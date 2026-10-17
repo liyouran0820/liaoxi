@@ -1,0 +1,21 @@
+name: Windows build
+on:
+  workflow_dispatch:
+  push:
+    paths: ['windows/**', '.github/workflows/windows.yml']
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Build executable
+        shell: powershell
+        run: ./windows/build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ChatArchive-Windows
+          path: windows/dist/ChatArchive-Windows.zip

@@ -110,6 +110,59 @@ final class ContentProcessorTests: XCTestCase {
             try XCTUnwrap(markdown.range(of: styleGuide)?.lowerBound),
             try XCTUnwrap(markdown.range(of: "## 对话内容")?.lowerBound)
         )
-        XCTAssertTrue(markdown.contains("这是回复  \n> 张三：这是被引用的原消息"))
+        XCTAssertTrue(markdown.contains("这是回复  \n\n> 张三：这是被引用的原消息"))
+    }
+
+    func testSingleFolderPreservesOriginalFilesAndCollisions() throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("ChatArchiveTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let inputs = parent.appendingPathComponent("inputs")
+        let second = inputs.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: second, withIntermediateDirectories: true)
+        let names = ["photo #1.png", "video.mp4", "conversation.md", "plan.pdf"]
+        let sources = names.enumerated().map { index, name in (inputs.appendingPathComponent(name), Data("original-\(index)".utf8)) }
+        for (url, data) in sources { try data.write(to: url) }
+        let collision = second.appendingPathComponent("plan.pdf")
+        try Data("another original".utf8).write(to: collision)
+        let report = try MarkdownExporter().export(lines: ["分享附件"], attachments: [], fileNames: ["plan.pdf"],
+                                                 quoteKeys: [], pages: 1, usedAccessibility: false,
+                                                 sourceFiles: sources.map(\.0) + [collision, sources[0].0], to: parent)
+        let folder = report.markdownURL.deletingLastPathComponent()
+        let outputNames = try FileManager.default.contentsOfDirectory(atPath: folder.path)
+        XCTAssertEqual(Set(outputNames), Set(["conversation.md", "photo #1.png", "video.mp4", "conversation-2.md", "plan.pdf", "plan-2.pdf"]))
+        XCTAssertFalse(outputNames.contains("attachments"))
+        for (url, data) in sources {
+            let name = url.lastPathComponent == "conversation.md" ? "conversation-2.md" : url.lastPathComponent
+            XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent(name)), data)
+        }
+        let md = try String(contentsOf: report.markdownURL, encoding: .utf8)
+        XCTAssertTrue(md.contains("(photo%20%231.png)"))
+        XCTAssertTrue(md.contains("(video.mp4)"))
+        XCTAssertEqual(report.imageCount, 1)
+        XCTAssertEqual(report.videoCount, 1)
+        XCTAssertEqual(report.fileCount, 3)
+        XCTAssertEqual(report.missingAttachmentCount, 0)
+        let moved = parent.appendingPathComponent("移动后的记录")
+        try FileManager.default.moveItem(at: folder, to: moved)
+        let regex = try NSRegularExpression(pattern: #"\]\(([^)]+)\)"#)
+        for match in regex.matches(in: md, range: NSRange(md.startIndex..<md.endIndex, in: md)) {
+            let range = try XCTUnwrap(Range(match.range(at: 1), in: md))
+            let name = try XCTUnwrap(String(md[range]).removingPercentEncoding)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: moved.appendingPathComponent(name).path))
+        }
+    }
+
+    func testMissingSourceIsExplicitAndNotCounted() throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("ChatArchiveTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let report = try MarkdownExporter().export(lines: ["missing.pdf"], attachments: [], fileNames: ["missing.pdf"],
+                                                 quoteKeys: [], pages: 1, usedAccessibility: false,
+                                                 sourceFiles: [parent.appendingPathComponent("missing.pdf")], to: parent)
+        XCTAssertEqual(report.fileCount, 0)
+        XCTAssertGreaterThan(report.missingAttachmentCount, 0)
+        let md = try String(contentsOf: report.markdownURL, encoding: .utf8)
+        XCTAssertTrue(md.contains("未保存的附件"))
     }
 }

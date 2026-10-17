@@ -21,7 +21,9 @@ struct WindowCaptureService {
         let pids = Set(apps.map(\.processID))
         let candidates = content.windows.filter { window in
             guard let app = window.owningApplication, pids.contains(app.processID) else { return false }
+            let title = (window.title ?? "").lowercased()
             return window.isOnScreen && window.frame.width >= 420 && window.frame.height >= 360
+                && (title.contains("聊天记录") || title.contains("chat history"))
         }
 
         let ranked = candidates.sorted { lhs, rhs in

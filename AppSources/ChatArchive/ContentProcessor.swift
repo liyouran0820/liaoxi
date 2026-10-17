@@ -114,8 +114,20 @@ struct ContentProcessor {
         return attachments
     }
 
+    func mediaRegions(in image: CGImage) throws -> [CGRect] {
+        let request = VNDetectRectanglesRequest()
+        request.maximumObservations = 20
+        request.minimumSize = 0.08
+        request.minimumAspectRatio = 0.15
+        request.maximumAspectRatio = 1
+        try VNImageRequestHandler(cgImage: image).perform([request])
+        return (request.results ?? []).map(\.boundingBox).filter {
+            $0.width > 0.16 && $0.width * $0.height < 0.5 && $0.midY > 0.04 && $0.midY < 0.92
+        }
+    }
+
     func likelyFileNames(in lines: [String]) -> [String] {
-        let pattern = #"(?i)(?:^|[\s：:（(【\[])([^/\\:*?\"<>|\n]{1,80}\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|md|csv|json|ya?ml))(?=$|[\s：:）)】\]])"#
+        let pattern = #"(?i)(?:^|[\s：:（(【\[])([^/\\:*?\"<>|\n]{1,120}\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|md|csv|json|ya?ml|png|jpe?g|gif|webp|heic|mp4|mov|m4v|avi|mkv|webm|mp3|wav))(?=$|[\s：:）)】\]])"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         var found: [String] = []
         for line in lines {
@@ -136,7 +148,7 @@ struct ContentProcessor {
 
     private func appendWithOverlap(_ incoming: [String], to result: inout [String]) {
         guard !incoming.isEmpty else { return }
-        let maxOverlap = min(result.count, incoming.count, 12)
+        let maxOverlap = min(result.count, incoming.count)
         var overlap = 0
         if maxOverlap > 0 {
             for count in stride(from: maxOverlap, through: 1, by: -1) {
@@ -148,9 +160,7 @@ struct ContentProcessor {
                 }
             }
         }
-        for line in incoming.dropFirst(overlap) {
-            if result.last.map(normalized) != normalized(line) { result.append(line) }
-        }
+        result.append(contentsOf: incoming.dropFirst(overlap))
     }
 
     private func isUseful(_ text: String) -> Bool {

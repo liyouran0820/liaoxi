@@ -3,3 +3,9 @@ dist/
 DerivedData/
 *.xcuserstate
 .DS_Store
+__pycache__/
+*.pyc
+.venv/
+windows/build/
+windows/dist/
+*.spec

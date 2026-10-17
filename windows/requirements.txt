@@ -1,0 +1,13 @@
+# Python 3.12 x64 / Windows 10 1903+ or Windows 11
+Pillow>=11.3,<13
+pywinauto==0.6.9
+pywin32>=311,<400
+psutil>=7,<8
+opencv-python-headless>=4.12,<5
+winrt-runtime==3.2.1
+winrt-Windows.Foundation==3.2.1
+winrt-Windows.Foundation.Collections==3.2.1
+winrt-Windows.Globalization==3.2.1
+winrt-Windows.Media.Ocr==3.2.1
+winrt-Windows.Graphics.Imaging==3.2.1
+winrt-Windows.Storage.Streams==3.2.1

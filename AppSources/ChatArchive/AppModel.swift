@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
     @Published var accessibilityGranted = AXIsProcessTrusted()
     @Published var screenCaptureGranted = CGPreflightScreenCaptureAccess()
     @Published var outputDirectory: URL?
+    @Published var sourceFiles: [URL] = []
     @Published var runState: RunState = .idle
     private var extractionTask: Task<Void, Never>?
 
@@ -101,7 +102,7 @@ final class AppModel: ObservableObject {
                 let pipeline = ExtractionPipeline { [weak self] status in
                     Task { @MainActor in self?.runState = .working(status) }
                 }
-                let report = try await pipeline.run(in: outputDirectory)
+                let report = try await pipeline.run(in: outputDirectory, sourceFiles: sourceFiles)
                 runState = .finished(report)
             } catch is CancellationError {
                 runState = .failed("已停止提取，没有写入未完成的结果。")
@@ -114,6 +115,18 @@ final class AppModel: ObservableObject {
 
     func cancel() {
         extractionTask?.cancel()
+    }
+
+    func chooseAttachments() {
+        let panel = NSOpenPanel()
+        panel.title = "补充从微信保存的照片、视频和文档"
+        panel.prompt = "添加附件"
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK {
+            for url in panel.urls where !sourceFiles.contains(url) { sourceFiles.append(url) }
+        }
     }
 
     func revealResult() {
