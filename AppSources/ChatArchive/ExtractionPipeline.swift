@@ -4,7 +4,7 @@ import CryptoKit
 import Foundation
 
 struct ExtractionPipeline {
-    let progress: @Sendable (String) -> Void
+    let progress: @MainActor @Sendable (String) -> Void
     private let captureService = WindowCaptureService()
     private let ocrService = OCRService()
     private let accessibilityService = AccessibilityTextService()

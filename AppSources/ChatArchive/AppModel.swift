@@ -100,7 +100,7 @@ final class AppModel: ObservableObject {
         extractionTask = Task {
             do {
                 let pipeline = ExtractionPipeline { [weak self] status in
-                    Task { @MainActor in self?.runState = .working(status) }
+                    self?.runState = .working(status)
                 }
                 let report = try await pipeline.run(in: outputDirectory, sourceFiles: sourceFiles)
                 runState = .finished(report)
