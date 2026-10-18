@@ -130,15 +130,19 @@ final class ContentProcessorTests: XCTestCase {
                                                  sourceFiles: sources.map(\.0) + [collision, sources[0].0], to: parent)
         let folder = report.markdownURL.deletingLastPathComponent()
         let outputNames = try FileManager.default.contentsOfDirectory(atPath: folder.path)
-        XCTAssertEqual(Set(outputNames), Set(["conversation.md", "photo #1.png", "video.mp4", "conversation-2.md", "plan.pdf", "plan-2.pdf"]))
+        XCTAssertEqual(Set(outputNames), Set([report.markdownURL.lastPathComponent, "photo #1.png", "video.mp4", "conversation.md", "plan.pdf", "plan-2.pdf"]))
+        XCTAssertEqual(report.markdownURL.deletingPathExtension().lastPathComponent, folder.lastPathComponent)
         XCTAssertFalse(outputNames.contains("attachments"))
         for (url, data) in sources {
-            let name = url.lastPathComponent == "conversation.md" ? "conversation-2.md" : url.lastPathComponent
+            let name = url.lastPathComponent
             XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent(name)), data)
         }
         let md = try String(contentsOf: report.markdownURL, encoding: .utf8)
         XCTAssertTrue(md.contains("(photo%20%231.png)"))
         XCTAssertTrue(md.contains("(video.mp4)"))
+        XCTAssertTrue(md.contains("[照片：photo #1.png]".replacingOccurrences(of: "#", with: "\\#")))
+        XCTAssertTrue(md.contains("[视频：video.mp4]"))
+        XCTAssertFalse(md.contains("!["))
         XCTAssertEqual(report.imageCount, 1)
         XCTAssertEqual(report.videoCount, 1)
         XCTAssertEqual(report.fileCount, 3)

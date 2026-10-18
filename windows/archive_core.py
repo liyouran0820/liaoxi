@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 from datetime import datetime
 import hashlib
 from pathlib import Path
@@ -33,11 +34,21 @@ class Cancelled(Exception):
 
 def check_cancel(stop: threading.Event | None):
     if stop is not None and stop.is_set():
-        raise Cancelled("已停止提取，未写入未完成的结果。")
+        raise Cancelled("已停止提取，已保存的附件保留在同名文件夹中。")
 
 
 def key(text: str) -> str:
     return "".join(c for c in text.casefold() if c.isalnum())
+
+
+def is_merged_record_title(title: str) -> bool:
+    title = title.strip()
+    lower = title.lower()
+    if title.startswith(("搜索聊天记录", "查找聊天记录", "聊天记录管理", "聊天记录备份", "聊天记录迁移")):
+        return False
+    if lower.startswith(("search", "find")) or "backup" in lower or "migration" in lower:
+        return False
+    return title == "聊天记录" or title.endswith("的聊天记录") or lower.endswith("chat history")
 
 
 def mark_quotes(lines: list[Line]) -> list[Line]:
@@ -111,16 +122,43 @@ class Report:
     file_count: int
     warnings: list[str]
 
+    @property
+    def markdown_path(self):
+        return self.folder / (self.folder.name + ".md")
+
+
+@contextmanager
+def archive_workspace(parent: Path):
+    folder = unique_path(Path(parent), f"微信聊天记录-{datetime.now():%Y-%m-%d-%H%M%S}")
+    folder.mkdir()
+    def note(reason):
+        md = folder / (folder.name + ".md")
+        text = f"# 微信合并聊天记录\n\n状态：{reason}\n\n## 已保存的附件\n\n"
+        for file in folder.iterdir():
+            if file != md and file.is_file():
+                text += f"- [{escaped(file.name)}]({quote(file.name, safe='-._~')})\n"
+        md.write_text(text, encoding="utf-8")
+    note("正在提取，附件直接保存在本目录。")
+    try:
+        yield folder
+    except BaseException:
+        note("提取未完成或已停止，已保存的附件保留在本目录。")
+        raise
+
 
 def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warnings: list[str] | None = None,
-                   pages: int = 0, text_source: str = "Windows UI Automation / 系统 OCR", stop=None) -> Report:
+                   pages: int = 0, text_source: str = "Windows UI Automation / 系统 OCR", stop=None,
+                   existing_directory: Path | None = None) -> Report:
     parent = Path(parent)
     if not parent.is_dir():
         raise ValueError("请选择存在的导出目录。")
     warnings = list(warnings or [])
-    stage = Path(tempfile.mkdtemp(prefix=".聊析-", dir=parent))
+    folder = Path(existing_directory) if existing_directory else unique_path(parent, f"微信聊天记录-{datetime.now():%Y-%m-%d-%H%M%S}")
+    markdown_name = folder.name + ".md"
+    stage = folder if existing_directory else Path(tempfile.mkdtemp(prefix=".聊析-", dir=parent))
     try:
-        (stage / "conversation.md").touch(exist_ok=False)
+        if not (stage / markdown_name).exists():
+            (stage / markdown_name).touch(exist_ok=False)
         saved: list[tuple[str, str]] = []
         hashes = set()
         saved_names = set()
@@ -132,6 +170,14 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
                 if source.is_symlink() or not source.is_file() or source.stat().st_size == 0:
                     raise ValueError("为空、是链接或不是普通文件")
                 sha = digest(source)
+                if source.parent.resolve() == stage.resolve():
+                    if source.name == markdown_name:
+                        continue
+                    kind = "照片" if source.suffix.lower() in IMAGES else "视频" if source.suffix.lower() in VIDEOS else "文档 / 文件"
+                    saved.append((source.name, kind))
+                    hashes.add(sha)
+                    saved_names.add(source.name.casefold())
+                    continue
                 if sha in hashes:
                     saved_names.add(source.name.casefold())
                     continue
@@ -156,7 +202,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
               "## 内容样式说明（供 LLM 阅读）", "",
               "- **正文样式**：不带引用前缀的普通文本，表示当前消息正文。",
               "- **引用样式**：以 `> ` 开头的 Markdown 引用块，表示微信正文下方灰色的被引用原消息；它是上下文，不是当前发送者的新正文。",
-              "- **附件样式**：图片使用图片链接，视频和文档使用文件链接，路径相对于本 Markdown。",
+              "- **附件样式**：照片、视频和文档单独保存，只按类型、实际文件名和相对链接引用。照片和视频内部的文字不转写进正文，LLM 可按文件名读取对应附件。",
               "- **缺失附件**：见文末“未保存的附件”；未下载成功、过期或未选择的文件不视为已保存。", "", "## 对话内容", ""]
         was_quote = False
         for line in lines:
@@ -168,16 +214,16 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
         if not saved:
             md.extend(["本次未取得附件原文件。", ""])
         for name, kind in saved:
-            md.extend([("!" if kind == "照片" else "") + f"[{escaped(name)}]({quote(name, safe='-._~')})", "", f"类型：{kind}", ""])
+            md.extend([f"[{kind}：{escaped(name)}]({quote(name, safe='-._~')})", ""])
         if warnings:
             md.extend(["## 未保存的附件 / 提取提示", ""] + [f"- {escaped(w)}" for w in warnings] + [""])
         counts = [sum(kind == k for _, kind in saved) for k in ("照片", "视频", "文档 / 文件")]
         md.extend(["## 提取信息", "", f"读取 {pages} 屏，{len(lines)} 行文字；保存 {counts[0]} 张照片、{counts[1]} 个视频、{counts[2]} 个文件。", ""])
-        (stage / "conversation.md").write_text("\n".join(md), encoding="utf-8")
+        (stage / markdown_name).write_text("\n".join(md), encoding="utf-8")
         check_cancel(stop)
-        folder = unique_path(parent, f"微信聊天记录-{datetime.now():%Y-%m-%d-%H%M%S}")
-        stage.rename(folder)
+        if not existing_directory:
+            stage.rename(folder)
         return Report(folder, len(lines), *counts, warnings)
     finally:
-        if stage.exists():
+        if stage.exists() and not existing_directory:
             shutil.rmtree(stage)

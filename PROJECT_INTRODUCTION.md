@@ -2,7 +2,7 @@
 
 ## 产品目标
 
-聊析服务于“手动合并转发、自动结构化整理”的工作流。用户主动在微信内筛选内容，应用读取已打开的合并记录，每次导出一个文件夹，里面平铺放置 `conversation.md` 及实际保存的照片、视频、文档，便于整体移动和交给 LLM。
+聊析服务于“手动合并转发、自动结构化整理”的工作流。用户主动在微信内筛选内容，应用读取已打开的合并记录，每次创建与 Markdown 同名的文件夹，里面平铺放置该 `.md` 及实际保存的照片、视频、文档，便于整体移动和交给 LLM。
 
 ## 技术路径
 
@@ -12,7 +12,9 @@
 - `ContentProcessor`：跨屏去重、文字源选择、灰色回复引用识别、图片候选裁切和文件名识别。
 - `AttachmentCollector`：逐屏定位候选附件，通过微信可见的另存或复制菜单收集附件。
 - `ArchiveFiles`：跨平台文件名兼容、同名编号、SHA-256 校验和相对链接。
-- `MarkdownExporter`：暂存、校验并原子提交单个导出文件夹；提示与统计内嵌 Markdown，不另写 JSON。
+- `ArchiveWorkspace`：先创建最终同名目录与状态 Markdown，附件直接保存其中；中断时保留已取得文件。
+- `MediaRegionDetector`：依据像素连接区检测媒体，并在聊天 OCR 前排除；不转写照片 / 视频内部文字。
+- `MarkdownExporter`：校验附件并原子写入同名 Markdown，按类型与实际文件名建立相对链接；提示与统计内嵌文末。
 - `windows/archive_core.py`：Windows 的导出格式、内容去重、引用标注与附件复制，纯标准库，支持在 Mac 运行导出测试。
 - `windows/windows_capture.py`：Windows UI Automation、WinRT OCR、窗口捕获、滚动与附件另存。
 - `windows/app.py`：Windows Tk 桌面界面，提取与停止在后台线程执行。

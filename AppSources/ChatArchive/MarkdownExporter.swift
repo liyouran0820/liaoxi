@@ -11,18 +11,25 @@ struct MarkdownExporter {
         usedAccessibility: Bool,
         sourceFiles: [URL] = [],
         attachmentWarnings: [String] = [],
+        existingDirectory: URL? = nil,
         to parentDirectory: URL
     ) throws -> ExtractionReport {
         let manager = FileManager.default
-        let staging = parentDirectory.appendingPathComponent(".聊析-\(UUID().uuidString)", isDirectory: true)
-        try manager.createDirectory(at: staging, withIntermediateDirectories: false)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
+        let folder = existingDirectory ?? ArchiveFiles.uniqueURL(in: parentDirectory, name: "微信聊天记录-\(formatter.string(from: Date()))")
+        let markdownName = folder.lastPathComponent + ".md"
+        let staging = existingDirectory ?? parentDirectory.appendingPathComponent(".聊析-\(UUID().uuidString)", isDirectory: true)
+        if existingDirectory == nil { try manager.createDirectory(at: staging, withIntermediateDirectories: false) }
         var committed = false
-        defer { if !committed { try? manager.removeItem(at: staging) } }
+        defer { if !committed && existingDirectory == nil { try? manager.removeItem(at: staging) } }
         var saved: [(name: String, kind: String, original: Bool)] = []
         var warnings = attachmentWarnings
         var hashes = Set<String>()
         var savedOriginalNames = Set<String>()
-        try Data().write(to: staging.appendingPathComponent("conversation.md"), options: .withoutOverwriting)
+        if !manager.fileExists(atPath: staging.appendingPathComponent(markdownName).path) {
+            try Data().write(to: staging.appendingPathComponent(markdownName), options: .withoutOverwriting)
+        }
         for source in sourceFiles {
             try Task.checkCancellation()
             do {
@@ -32,6 +39,13 @@ struct MarkdownExporter {
                     continue
                 }
                 let digest = try ArchiveFiles.digest(source)
+                if source.deletingLastPathComponent().standardizedFileURL == staging.standardizedFileURL {
+                    guard source.lastPathComponent != markdownName else { continue }
+                    hashes.insert(digest)
+                    savedOriginalNames.insert(source.lastPathComponent.lowercased())
+                    saved.append((source.lastPathComponent, ArchiveFiles.kind(source), true))
+                    continue
+                }
                 if hashes.contains(digest) {
                     savedOriginalNames.insert(source.lastPathComponent.lowercased())
                     continue
@@ -73,7 +87,7 @@ struct MarkdownExporter {
         markdown += "## 内容样式说明（供 LLM 阅读）\n\n"
         markdown += "- **正文样式**：不带引用前缀的普通文本，表示当前消息正文。\n"
         markdown += "- **引用样式**：以 `> ` 开头的 Markdown 引用块，表示微信正文下方灰色的被引用原消息；它是上下文，不是当前发送者的新正文。\n"
-        markdown += "- **附件样式**：图片使用图片链接，视频和文档使用文件链接，路径相对于本 Markdown。标为“界面预览”的图片仅用于辅助阅读，不能代替原附件。\n"
+        markdown += "- **附件样式**：照片、视频和文档单独保存，只按类型、实际文件名和相对链接引用。照片和视频内部的文字不转写进正文，LLM 可按文件名读取对应附件。\n"
         markdown += "- **缺失附件**：见文末“未保存的附件”；未下载成功、过期或未选择的文件不视为已保存。\n\n"
         markdown += "## 对话内容\n\n"
         var wasQuote = false
@@ -88,12 +102,7 @@ struct MarkdownExporter {
         for file in saved {
             let link = ArchiveFiles.relativeLink(file.name)
             let label = escaped(file.name)
-            if file.kind == "照片" || !file.original {
-                markdown += "![\(label)](\(link))\n\n"
-            } else {
-                markdown += "[\(label)](\(link))\n\n"
-            }
-            markdown += "类型：\(file.kind)\n\n"
+            markdown += "[\(file.kind)：\(label)](\(link))\n\n"
         }
         if !warnings.isEmpty {
             markdown += "## 未保存的附件 / 提取提示\n\n"
@@ -104,14 +113,11 @@ struct MarkdownExporter {
         let videos = saved.filter { $0.kind == "视频" }.count
         let documents = saved.filter { $0.kind == "文档 / 文件" }.count
         markdown += "## 提取信息\n\n读取 \(pages) 屏，\(lines.count) 行文字；保存 \(originalImages) 张照片、\(videos) 个视频、\(documents) 个文件。\n"
-        try markdown.write(to: staging.appendingPathComponent("conversation.md"), atomically: true, encoding: .utf8)
+        try markdown.write(to: staging.appendingPathComponent(markdownName), atomically: true, encoding: .utf8)
         try Task.checkCancellation()
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd-HHmmss"
-        let folder = ArchiveFiles.uniqueURL(in: parentDirectory, name: "微信聊天记录-\(formatter.string(from: Date()))")
-        try manager.moveItem(at: staging, to: folder)
+        if existingDirectory == nil { try manager.moveItem(at: staging, to: folder) }
         committed = true
-        let md = folder.appendingPathComponent("conversation.md")
+        let md = folder.appendingPathComponent(markdownName)
         return ExtractionReport(markdownURL: md, reportURL: md, textLineCount: lines.count,
                                 imageCount: originalImages, pageCount: pages, usedAccessibilityText: usedAccessibility,
                                 fileCount: documents, videoCount: videos, missingAttachmentCount: warnings.count)

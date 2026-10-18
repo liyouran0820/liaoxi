@@ -4,10 +4,10 @@ from __future__ import annotations
 import io
 from pathlib import Path
 import re
-import tempfile
 import sys
+import uuid
 
-from archive_core import Line, check_cancel, export_archive, file_names, key, mark_quotes, merge_pages, unique_path
+from archive_core import Line, archive_workspace, check_cancel, digest, export_archive, file_names, is_merged_record_title, key, mark_quotes, merge_pages, unique_path
 
 
 class WeChatCapture:
@@ -37,7 +37,7 @@ class WeChatCapture:
             try:
                 process = psutil.Process(window.process_id()).name().lower()
                 title = window.window_text()
-                if process in {"wechat.exe", "weixin.exe"} and ("聊天记录" in title or "chat history" in title.lower()):
+                if process in {"wechat.exe", "weixin.exe"} and is_merged_record_title(title):
                     rect = window.rectangle()
                     if rect.width() >= 300 and rect.height() >= 300:
                         result.append((window.handle, title))
@@ -151,22 +151,26 @@ class WeChatCapture:
             if box.width() > rect.width() * .16 and box.height() > 50 and rect_contains(rect, box):
                 regions.append(((box.left - rect.left) / rect.width(), (box.top - rect.top) / rect.height(),
                                 box.width() / rect.width(), box.height() / rect.height()))
-        gray = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2GRAY)
-        edges = cv2.Canny(gray, 60, 150)
-        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-        for contour in contours:
-            perimeter = cv2.arcLength(contour, True)
-            approx = cv2.approxPolyDP(contour, .025 * perimeter, True)
-            if len(approx) != 4:
-                continue
-            x, y, w, h = cv2.boundingRect(approx)
-            area = w * h / (image.width * image.height)
-            if w > image.width * .16 and h > 60 and .012 < area < .45 and .05 < y / image.height < .9:
-                if not any(abs(x / image.width - a) < .03 and abs(y / image.height - b) < .03 for a, b, _, _ in regions):
-                    regions.append((x / image.width, y / image.height, w / image.width, h / image.height))
+        # Pixel components handle rounded thumbnails, tall photos and video cards without reading their text.
+        small = image.resize((360, max(4, int(image.height * 360 / image.width))))
+        array = np.asarray(small, dtype=np.int16)
+        height, width = array.shape[:2]
+        background = np.median(array[height // 6:height * 9 // 10, width * 95 // 100, :], axis=0)
+        ink = (np.max(np.abs(array - background), axis=2) > 35).astype(np.uint8)
+        joined = cv2.dilate(ink, np.ones((3, 3), np.uint8))
+        count, _, stats, _ = cv2.connectedComponentsWithStats(joined)
+        for index in range(1, count):
+            x, y, w, h, _ = stats[index]
+            density = np.count_nonzero(ink[y:y+h, x:x+w]) / (w * h)
+            area = w * h / (width * height)
+            if w / width >= .12 and h / height >= .045 and x / width >= .07 and (x+w) / width < .95 and y / height > .09 and .007 <= area < .65 and density > .16:
+                left, top = max(0, x-2), max(0, y-2)
+                right, bottom = min(width, x+w+2), min(height, y+h+2)
+                if not any(abs(left / width - a) < .03 and abs(top / height - b) < .03 for a, b, _, _ in regions):
+                    regions.append((left / width, top / height, (right-left) / width, (bottom-top) / height))
         return regions[:20]
 
-    def save_candidate(self, window, x, y, temporary: Path):
+    async def save_candidate(self, window, x, y, temporary: Path):
         """Only invoke Save As. Never double click/launch file contents."""
         self.activate(window)
         rect = window.rectangle()
@@ -176,16 +180,37 @@ class WeChatCapture:
         for top in self.desktop.windows(process=window.process_id()):
             menu_items.extend(top.descendants(control_type="MenuItem"))
         allowed = {"另存为", "保存为", "保存图片", "保存视频", "Save As", "Save as", "Save Image As", "Save Video As"}
-        save = next((item for item in menu_items if re.sub(r"[.…&]", "", item.window_text()).strip() in allowed
+        normalize_title = lambda text: re.sub(r"[.…&]|\([A-Za-z]\)|（[A-Za-z]）", "", text).strip()
+        save = next((item for item in menu_items if normalize_title(item.window_text()) in allowed
                      and item.is_enabled() and item.is_visible()), None)
-        if save is None:
-            copy = next((item for item in menu_items if item.window_text().strip() in {"复制", "Copy", "复制图片", "Copy Image"}
+        save_point = None
+        copy_point = None
+        if save is None and not any(normalize_title(item.window_text()) in {"复制", "Copy", "复制图片", "Copy Image"}
+                                    and item.is_enabled() and item.is_visible() for item in menu_items):
+            px, py = rect.left + int(x * rect.width()), rect.top + int(y * rect.height())
+            bounds = (max(rect.left, px-220), max(rect.top, py-20), min(rect.right, px+300), min(rect.bottom, py+420))
+            menu_image = self.grab.grab(bbox=bounds, all_screens=True).convert("RGB")
+            menu_lines = await self.recognize(menu_image)
+            recognized = [line for line in menu_lines if re.sub(r"[.…&]|\([A-Za-z]\)", "", line.text).strip() in allowed | {"复制", "Copy", "转发", "收藏", "删除", "多选", "Forward", "Delete"}]
+            if len(recognized) >= 2:
+                for line in recognized:
+                    title = re.sub(r"[.…&]|\([A-Za-z]\)", "", line.text).strip()
+                    point = (bounds[0] + int((line.x + line.width / 2) * menu_image.width), bounds[1] + int((line.y + line.height / 2) * menu_image.height))
+                    if title in allowed and save_point is None:
+                        save_point = point
+                    elif title in {"复制", "Copy"} and copy_point is None:
+                        copy_point = point
+        if save is None and save_point is None:
+            copy = next((item for item in menu_items if normalize_title(item.window_text()) in {"复制", "Copy", "复制图片", "Copy Image"}
                          and item.is_enabled() and item.is_visible()), None)
-            if copy is not None:
-                return self.copy_candidate(copy, temporary)
-            self.keyboard.send_keys("{ESC}")
+            if copy is not None or copy_point is not None:
+                return self.copy_candidate(copy, temporary, copy_point)
+            self.mouse.click(coords=(rect.left + rect.width() // 2, rect.top + 55))
             return []
-        save.click_input()
+        if save_point:
+            self.mouse.click(coords=save_point)
+        else:
+            save.click_input()
         dialog = None
         for _ in range(30):
             check_cancel(self.stop)
@@ -199,7 +224,6 @@ class WeChatCapture:
             self.pause(.1)
         if dialog is None:
             # Do not press Enter blindly when WeChat did not present a save dialog.
-            self.keyboard.send_keys("{ESC}")
             return []
         check_cancel(self.stop)
         edits = dialog.descendants(control_type="Edit")
@@ -207,34 +231,48 @@ class WeChatCapture:
         if filename is None:
             filename = next((edit for edit in edits if "文件名" in edit.element_info.name or "file name" in edit.element_info.name.lower()), None)
         if filename is None:
-            self.keyboard.send_keys("{ESC}")
+            self.cancel_save_dialog(dialog)
             return []
         old = filename.get_value().strip('"')
-        if not old or not Path(old).suffix:
-            self.keyboard.send_keys("{ESC}")
+        if not old:
+            self.cancel_save_dialog(dialog)
             return []
-        destination = unique_path(temporary, Path(old).name)
+        before = {p.name for p in temporary.iterdir()}
+        destination = unique_path(temporary, f"media-{uuid.uuid4().hex[:8]}-" + Path(old).name)
         filename.set_edit_text(str(destination))
         buttons = dialog.descendants(control_type="Button")
         button = next((b for b in buttons if b.element_info.automation_id == "1" or b.window_text().replace("&", "") in {"保存", "保存(S)", "Save", "Save(S)"}), None)
         if button is None:
-            self.keyboard.send_keys("{ESC}")
+            self.cancel_save_dialog(dialog)
             return []
         button.click_input()
         last_size = -1
+        last_name = ""
         stable = 0
-        for _ in range(100):
+        for _ in range(600):
             self.pause(.2)
-            if destination.is_file():
-                size = destination.stat().st_size
-                stable = stable + 1 if size > 0 and size == last_size else 0
+            file = next((p for p in temporary.iterdir() if p.name not in before and p.is_file()
+                         and p.suffix.lower() not in {".tmp", ".part", ".download"}), None)
+            if file:
+                size = file.stat().st_size
+                stable = stable + 1 if size > 0 and size == last_size and file.name == last_name else 0
                 last_size = size
-                if stable >= 5:
-                    return [destination]
-        self.keyboard.send_keys("{ESC}")
+                last_name = file.name
+                if stable >= 15:
+                    return [file]
+        self.cancel_save_dialog(dialog)
         return []
 
-    def copy_candidate(self, item, temporary):
+    def cancel_save_dialog(self, dialog):
+        try:
+            cancel = next((b for b in dialog.descendants(control_type="Button")
+                           if b.element_info.automation_id == "2" or b.window_text().replace("&", "") in {"取消", "Cancel"}), None)
+            if cancel:
+                cancel.click_input()
+        except Exception:
+            pass
+
+    def copy_candidate(self, item, temporary, point=None):
         import win32clipboard as clipboard
         import shutil
         from PIL import Image
@@ -261,7 +299,10 @@ class WeChatCapture:
         own_sequence = before
         result = []
         try:
-            item.click_input()
+            if point:
+                self.mouse.click(coords=point)
+            else:
+                item.click_input()
             for _ in range(15):
                 self.stop.wait(.1)
                 own_sequence = win32clipboard_sequence()
@@ -301,7 +342,8 @@ class WeChatCapture:
         pages = []
         warnings = []
         any_ax = False
-        with tempfile.TemporaryDirectory(prefix="ChatArchive-") as temporary:
+        downloaded_hashes = {}
+        with archive_workspace(Path(parent)) as temporary:
             temporary = Path(temporary)
             top_signature = None
             for _ in range(60):
@@ -322,12 +364,18 @@ class WeChatCapture:
                     reached_bottom = True
                     break
                 previous = signature
-                lines = await self.recognize(image)
+                regions = self.media_regions(window, image)
+                from PIL import ImageDraw
+                text_image = image.copy()
+                drawing = ImageDraw.Draw(text_image)
+                for x, y, w, h in regions:
+                    drawing.rectangle((int(x*image.width), int(y*image.height), int((x+w)*image.width), int((y+h)*image.height)), fill="white")
+                lines = await self.recognize(text_image)
                 lines, used_ax = self.accessible_text(window, lines)
                 any_ax |= used_ax
                 pages.append(lines)
                 candidates = [(line.x + line.width / 2, line.y + line.height / 2, line.text) for line in lines if file_names([line])]
-                for x, y, w, h in self.media_regions(window, image):
+                for x, y, w, h in regions:
                     context = "|".join(line.text for line in lines if 0 < y - line.y < .1)
                     candidates.append((x + w / 2, y + h / 2, f"media|{context}|{w:.2f}|{h:.2f}"))
                 for x, y, identity in candidates:
@@ -335,9 +383,17 @@ class WeChatCapture:
                         continue
                     attempted.add(identity)
                     try:
-                        files.extend(self.save_candidate(window, x, y, temporary))
+                        for file in await self.save_candidate(window, x, y, temporary):
+                            sha = digest(file)
+                            first = downloaded_hashes.get(sha)
+                            if first is not None and first != file and digest(first) == sha:
+                                file.unlink()  # Fresh collector-created duplicate; verified first copy remains.
+                            else:
+                                downloaded_hashes[sha] = file
+                                files.append(file)
                     except Exception as error:
-                        self.keyboard.send_keys("{ESC}")
+                        rect = window.rectangle()
+                        self.mouse.click(coords=(rect.left + rect.width() // 2, rect.top + 55))
                         check_cancel(self.stop)
                         warnings.append(f"附件自动另存失败：{type(error).__name__}，可使用补充附件。")
                 self.scroll(window, -max(2, int(window.rectangle().height() * .55 / 120)))
@@ -349,7 +405,8 @@ class WeChatCapture:
             if not files and attempted:
                 warnings.append("微信未提供可自动保存的原附件。请将附件在微信另存后，通过“补充附件”重新导出。")
             return export_archive(Path(parent), lines, files, warnings=warnings, pages=len(pages),
-                                  text_source="Windows UI Automation + 系统 OCR" if any_ax else "Windows 本地 OCR", stop=self.stop)
+                                  text_source="Windows UI Automation + 系统 OCR" if any_ax else "Windows 本地 OCR", stop=self.stop,
+                                  existing_directory=temporary)
 
 
 def win32clipboard_sequence():

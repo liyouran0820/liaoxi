@@ -105,7 +105,7 @@ final class AppModel: ObservableObject {
                 let report = try await pipeline.run(in: outputDirectory, sourceFiles: sourceFiles)
                 runState = .finished(report)
             } catch is CancellationError {
-                runState = .failed("已停止提取，没有写入未完成的结果。")
+                runState = .failed("已停止提取，已保存的附件保留在同名文件夹中，Markdown 会标明未完成。")
             } catch {
                 runState = .failed(error.localizedDescription)
             }

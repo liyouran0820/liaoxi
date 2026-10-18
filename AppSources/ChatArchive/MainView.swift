@@ -68,7 +68,7 @@ struct MainView: View {
                 VStack(alignment: .leading, spacing: 7) {
                     Text(model.outputDirectory?.lastPathComponent ?? "尚未选择位置")
                         .font(.system(size: 17, weight: .semibold))
-                    Text(model.outputDirectory?.path(percentEncoded: false) ?? "聊天记录与照片、视频、文档保存到同一文件夹")
+                    Text(model.outputDirectory?.path(percentEncoded: false) ?? "MD 与同名文件夹中的照片、视频、文档一起保存")
                         .font(.system(size: 13))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)

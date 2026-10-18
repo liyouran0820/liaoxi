@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 import Foundation
 import ScreenCaptureKit
@@ -21,9 +22,8 @@ struct WindowCaptureService {
         let pids = Set(apps.map(\.processID))
         let candidates = content.windows.filter { window in
             guard let app = window.owningApplication, pids.contains(app.processID) else { return false }
-            let title = (window.title ?? "").lowercased()
             return window.isOnScreen && window.frame.width >= 420 && window.frame.height >= 360
-                && (title.contains("聊天记录") || title.contains("chat history"))
+                && ChatWindowSelector.isMergedRecordTitle(window.title ?? "")
         }
 
         let ranked = candidates.sorted { lhs, rhs in
@@ -42,6 +42,7 @@ struct WindowCaptureService {
         configuration.width = max(1, Int(target.window.frame.width * scale))
         configuration.height = max(1, Int(target.window.frame.height * scale))
         configuration.showsCursor = false
+        configuration.ignoreShadowsSingleWindow = true
         configuration.captureResolution = .best
         configuration.colorSpaceName = CGColorSpace.sRGB
 
@@ -55,9 +56,43 @@ struct WindowCaptureService {
         }
     }
 
-    func activateAndScroll(target: CapturableWindow, delta: Int32) async {
+    func captureVisibleRegion(target: CapturableWindow, rect: CGRect) async throws -> (image: CGImage, frame: CGRect) {
+        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        guard let display = content.displays.first(where: { $0.frame.contains(CGPoint(x: rect.midX, y: rect.midY)) })
+            ?? content.displays.first(where: { $0.frame.intersects(rect) }) else { throw ExtractionError.captureFailed }
+        let clipped = rect.intersection(display.frame)
+        let filter = SCContentFilter(display: display, including: [target.application], exceptingWindows: [])
+        let config = SCStreamConfiguration()
+        config.sourceRect = clipped.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
+        config.width = max(1, Int(clipped.width * 2))
+        config.height = max(1, Int(clipped.height * 2))
+        config.showsCursor = false
+        config.ignoreShadowsDisplay = true
+        return (try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config), clipped)
+    }
+
+    @MainActor
+    func activateAndScroll(target: CapturableWindow, delta: Int32) async throws {
         if let app = NSRunningApplication(processIdentifier: target.application.processID) {
-            app.activate(options: [.activateAllWindows])
+            app.activate(options: [])
+        }
+        let root = AXUIElementCreateApplication(target.application.processID)
+        var value: CFTypeRef?
+        AXUIElementCopyAttributeValue(root, kAXWindowsAttribute as CFString, &value)
+        guard let windows = value as? [AXUIElement], let selected = windows.first(where: { window in
+            var title: CFTypeRef?
+            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title)
+            return (title as? String) == target.window.title
+        }) else {
+            CaptureDiagnostics.record("raise-failed AX-window-not-found pid=\(target.application.processID)")
+            throw ExtractionError.noSuitableWindow
+        }
+        AXUIElementPerformAction(selected, kAXRaiseAction as CFString)
+        AXUIElementSetAttributeValue(root, kAXFocusedWindowAttribute as CFString, selected)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.application.processID else {
+            CaptureDiagnostics.record("raise-failed front=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0) target=\(target.application.processID)")
+            throw ExtractionError.noSuitableWindow
         }
         let location = CGPoint(x: target.window.frame.midX, y: target.window.frame.midY)
         let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: location, mouseButton: .left)
@@ -65,7 +100,7 @@ struct WindowCaptureService {
         let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: delta, wheel2: 0, wheel3: 0)
         event?.location = location
         event?.post(tap: .cghidEventTap)
-        try? await Task.sleep(nanoseconds: 450_000_000)
+        try await Task.sleep(nanoseconds: 650_000_000)
     }
 
     private func score(_ window: SCWindow) -> Double {
