@@ -2,6 +2,46 @@ import XCTest
 @testable import ChatArchive
 
 final class ContentProcessorTests: XCTestCase {
+    func testHeaderAndOCRNicknameDoNotDuplicateMessages() {
+        let first = ["●", "Alice和Bob的聊天记录", "••●", "Alice01", "2026年10月18日 22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件"]
+        let second = ["Alice和Bob的聊天记录", "•••", "Alice0l", "2026年10月18日22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件", "Bob", "2026年10月18日 22:46", "这是下一条消息"]
+        let third = ["Alice和Bob的聊天记录", "•••", "Bob", "2026年10月18日 22:46", "这是下一条消息", "Alice01", "2026年10月18日 22:47", "请先保存全部原始附件", "👍"]
+        let result = ContentProcessor().mergeAccessibilityPages([first, second, third])
+        XCTAssertEqual(result, Array(first.dropFirst(3)) + Array(second.suffix(3)) + Array(third.suffix(4)))
+        XCTAssertEqual(result.filter { $0 == "请先保存全部原始附件" }.count, 2)
+        let ocr = [first, second, third].map { $0.map { RecognizedLine(text: $0, bounds: .zero, confidence: 1) } }
+        XCTAssertEqual(ContentProcessor().mergePages(ocr), result)
+    }
+
+    func testOverlapKeepsNewlyVisibleLineAndDistinctTimes() {
+        let first = ["Alice01", "2026年10月18日 22:44", "请先保存全部原始附件", "然后检查目录里的文件"]
+        let second = ["Alice0l", "2026年10月18日22:44", "请先保存全部原始附件", "中间新识别到的内容", "然后检查目录里的文件", "结束"]
+        XCTAssertEqual(PageOverlap.merge(first, second), Array(first.prefix(3)) + ["中间新识别到的内容", "然后检查目录里的文件", "结束"])
+        let later = ["Alice01", "2026年10月18日 22:45", "请先保存全部原始附件", "然后检查目录里的文件", "新消息"]
+        XCTAssertEqual(PageOverlap.merge(first, later), first + later)
+    }
+
+    func testBodyHeadingAndEmojiArePreservedOutsideTitleBar() {
+        let page = [RecognizedLine(text: "某人的聊天记录", bounds: CGRect(x: 0.1, y: 0.4, width: 0.5, height: 0.03), confidence: 1),
+                    RecognizedLine(text: "👍", bounds: CGRect(x: 0.1, y: 0.3, width: 0.1, height: 0.03), confidence: 1)]
+        XCTAssertEqual(ContentProcessor().mergePages([page]), ["某人的聊天记录", "👍"])
+        XCTAssertEqual(PageOverlap.merge(["👍"], ["👎"]), ["👍", "👎"])
+    }
+
+    func testCorruptedSenderAndClippedTimeUseAlignedContext() {
+        let first = ["Alice01", "2026年10月18日 22:47", "请先保存全部原始附件", "Bob", "2026年10月18日 22:48", "然后检查目录里的文件"]
+        let next = ["TayToTK", "2020年10月18日 22:4/", "请先保存全部原始附件", "Bob", "2026年10月18日 22:48", "然后检查目录里的文件", "新增消息"]
+        XCTAssertEqual(PageOverlap.merge(first, next), first + ["新增消息"])
+    }
+
+    func testSimilarCommandsAreNotOCRNicknameDuplicates() {
+        let first = ["共同上下文第一行内容", "共同上下文第二行内容", "共同上下文第三行内容", "run --level=1"]
+        let second = ["共同上下文第一行内容", "共同上下文第二行内容", "共同上下文第三行内容", "run --level=2", "结束"]
+        let merged = PageOverlap.merge(first, second)
+        XCTAssertTrue(merged.contains("run --level=1"))
+        XCTAssertTrue(merged.contains("run --level=2"))
+    }
+
     func testMergesOverlappingOCRPages() {
         let processor = ContentProcessor()
         let pageOne = [

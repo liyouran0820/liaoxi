@@ -38,7 +38,8 @@ def check_cancel(stop: threading.Event | None):
 
 
 def key(text: str) -> str:
-    return "".join(c for c in text.casefold() if c.isalnum())
+    value = "".join(c for c in text.casefold() if c.isalnum())
+    return value or text.strip()
 
 
 def is_merged_record_title(title: str) -> bool:
@@ -69,14 +70,119 @@ def mark_quotes(lines: list[Line]) -> list[Line]:
 def merge_pages(pages: list[list[Line]]) -> list[Line]:
     result: list[Line] = []
     for page in pages:
-        incoming = [line for line in page if line.text.strip() not in {"", "微信", "WeChat", "聊天记录", "关闭", "完成"}]
+        def heading(text):
+            return text.strip().endswith("的聊天记录") or text.strip().lower().endswith("chat history")
+        has_header = any(heading(line.text) for line in page[:4])
+        incoming = [line for index, line in enumerate(page)
+                    if line.text.strip() not in {"", "微信", "WeChat", "聊天记录", "关闭", "完成"}
+                    and not ((line.y < .12 if line.height > 0 else index < 4)
+                             and (heading(line.text) or (has_header and line.text.strip() in {"●", "••●", "•••", "···", "..."})))]
+        result = _merge_overlap(result, incoming)
+    return result
+
+
+def _similar_line(a: Line, b: Line, *, before_timestamp=False) -> bool:
+    if a.quoted != b.quoted:
+        return False
+    left, right = key(a.text), key(b.text)
+    if left == right:
+        return bool(left)
+    if min(len(left), len(right)) < 6:
+        return False
+    timestamp = r"\d{4}年\d{1,2}月\d{1,2}日"
+    if re.search(timestamp, left) and re.search(timestamp, right) and len(left) == len(right):
+        return False
+    latin_names = before_timestamp and max(len(left), len(right)) <= 32 and (left + right).isascii()
+    if not (latin_names or (re.search(timestamp, left) and re.search(timestamp, right))):
+        return False
+    limit = min(2, max(len(left), len(right)) // 5)
+    if abs(len(left) - len(right)) > limit:
+        return False
+    row = list(range(len(right) + 1))
+    for i, character in enumerate(left):
+        next_row = [i + 1] + [0] * len(right)
+        for j in range(1, len(right) + 1):
+            next_row[j] = min(row[j] + 1, next_row[j-1] + 1, row[j-1] + (character != right[j-1]))
+        row = next_row
+    return row[-1] <= limit
+
+
+def _merge_overlap(previous: list[Line], incoming: list[Line]) -> list[Line]:
+    """Suffix/prefix alignment only: equal messages elsewhere are deliberately retained."""
+    if not previous or not incoming:
+        return previous + incoming
+    base = max(0, len(previous) - 160)
+    a, b = previous[base:], incoming[:160]
+    n, m = len(a), len(b)
+    scores = [[0] * (m + 1) for _ in range(n + 1)]
+    moves = [[0] * (m + 1) for _ in range(n + 1)]
+    for j in range(1, m + 1):
+        scores[0][j], moves[0][j] = -2 * j, 2
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            before_timestamp = (i < n and j < m
+                                and re.search(r"\d{4}年\d{1,2}月\d{1,2}日", key(a[i].text))
+                                and re.search(r"\d{4}年\d{1,2}月\d{1,2}日", key(b[j].text)))
+            diagonal = scores[i-1][j-1] + 3 if _similar_line(a[i-1], b[j-1], before_timestamp=before_timestamp) else -100_000
+            up, left = scores[i-1][j] - 2, scores[i][j-1] - 2
+            scores[i][j] = max(diagonal, up, left)
+            moves[i][j] = 0 if diagonal == scores[i][j] else 1 if up == scores[i][j] else 2
+    best = None
+    for end in range(1, m + 1):
+        if scores[n][end] <= 0:
+            continue
+        i, j, steps, matches = n, end, [], []
+        while j:
+            if moves[i][j] == 0:
+                i, j = i - 1, j - 1
+                steps.append((i, j))
+                matches.append((i, j))
+            elif moves[i][j] == 1:
+                i -= 1
+                steps.append((i, None))
+            else:
+                j -= 1
+                steps.append((None, j))
+        anchors = {key(a[x].text) for x, _ in matches if len(key(a[x].text)) >= 6
+                   and not re.search(r"\d{4}年\d{1,2}月\d{1,2}日", key(a[x].text))}
+        matched_left, matched_right = {x for x, _ in matches}, {y for _, y in matches}
+        old_times = [x for x in range(i, n) if x not in matched_left and re.fullmatch(r"\d{4}年\d{1,2}月\d{1,2}日\d{4}", key(a[x].text))]
+        new_times = [y for y in range(end) if y not in matched_right and re.fullmatch(r"\d{4}年\d{1,2}月\d{1,2}日\d{4}", key(b[y].text))]
+        if (len(matches) < 3 or sum(map(len, anchors)) < 12
+                or (old_times and new_times)
+                or len(matches) / max(n-i, end) < .7
+                or min(y for _, y in matches) > 2 or max(x for x, _ in matches) < n - 3):
+            continue
+        if best is None or scores[n][end] > best[0]:
+            best = scores[n][end], i, end, list(reversed(steps))
+    if best is not None:
+        _, start, end, steps = best
+        merged = previous[:base+start]
+        matched_left = {x for x, y in steps if x is not None and y is not None}
+        matched_right = {y for x, y in steps if x is not None and y is not None}
+        def sender(text):
+            return 1 <= len(text) <= 32 and text.isascii() and any(c.isalpha() for c in text)
+        duplicate_senders = {y-1 for x, y in steps if x is not None and y is not None and x > 0 and y > 0
+                             and re.search(r"\d{4}年\d{1,2}月\d{1,2}日", key(a[x].text))
+                             and re.search(r"\d{4}年\d{1,2}月\d{1,2}日", key(b[y].text))
+                             and x-1 not in matched_left and y-1 not in matched_right
+                             and sender(key(a[x-1].text)) and sender(key(b[y-1].text))}
+        for left, right in steps:
+            if left is None:
+                if right not in duplicate_senders:
+                    merged.append(b[right])
+            elif right is not None and len(key(b[right].text)) > len(key(a[left].text)) and key(a[left].text) in key(b[right].text):
+                merged.append(b[right])
+            else:
+                merged.append(a[left])
+        return merged + incoming[end:]
+    else:
         overlap = 0
-        for count in range(min(len(result), len(incoming)), 0, -1):
-            if [(key(x.text), x.quoted) for x in result[-count:]] == [(key(x.text), x.quoted) for x in incoming[:count]]:
+        for count in range(min(n, m), 0, -1):
+            if [(key(x.text), x.quoted) for x in a[-count:]] == [(key(x.text), x.quoted) for x in b[:count]]:
                 overlap = count
                 break
-        result.extend(incoming[overlap:])
-    return result
+        return previous + incoming[overlap:]
 
 
 def file_names(lines: list[Line]) -> list[str]:

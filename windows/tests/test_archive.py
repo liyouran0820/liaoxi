@@ -11,6 +11,40 @@ from archive_core import Cancelled, Line, archive_workspace, digest, export_arch
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_headers_and_ocr_nickname_do_not_duplicate_messages(self):
+        first = ["●", "Alice和Bob的聊天记录", "••●", "Alice01", "2026年10月18日 22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件"]
+        second = ["Alice和Bob的聊天记录", "•••", "Alice0l", "2026年10月18日22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件", "Bob", "2026年10月18日 22:46", "这是下一条消息"]
+        third = ["Alice和Bob的聊天记录", "•••", "Bob", "2026年10月18日 22:46", "这是下一条消息", "Alice01", "2026年10月18日 22:47", "请先保存全部原始附件", "👍"]
+        result = merge_pages([[Line(text) for text in page] for page in [first, second, third]])
+        self.assertEqual([line.text for line in result], first[3:] + second[-3:] + third[-4:])
+
+    def test_overlap_keeps_missing_lines_and_distinct_times(self):
+        first = ["Alice01", "2026年10月18日 22:44", "请先保存全部原始附件", "然后检查目录里的文件"]
+        second = ["Alice0l", "2026年10月18日22:44", "请先保存全部原始附件", "中间新识别到的内容", "然后检查目录里的文件", "结束"]
+        result = merge_pages([[Line(text) for text in page] for page in [first, second]])
+        self.assertEqual([line.text for line in result], first[:3] + second[3:])
+        later = ["Alice01", "2026年10月18日 22:45", "请先保存全部原始附件", "然后检查目录里的文件", "新消息"]
+        result = merge_pages([[Line(text) for text in page] for page in [first, later]])
+        self.assertEqual([line.text for line in result], first + later)
+
+    def test_body_heading_and_emoji_are_not_window_chrome(self):
+        lines = [Line("某人的聊天记录", y=.4, height=.03), Line("👍", y=.5, height=.03)]
+        self.assertEqual(merge_pages([lines]), lines)
+        self.assertEqual([x.text for x in merge_pages([[Line("👍")], [Line("👎")]])], ["👍", "👎"])
+
+    def test_corrupted_sender_and_clipped_time_use_aligned_context(self):
+        first = ["Alice01", "2026年10月18日 22:47", "请先保存全部原始附件", "Bob", "2026年10月18日 22:48", "然后检查目录里的文件"]
+        second = ["TayToTK", "2020年10月18日 22:4/", "请先保存全部原始附件", "Bob", "2026年10月18日 22:48", "然后检查目录里的文件", "新增消息"]
+        result = merge_pages([[Line(text) for text in page] for page in [first, second]])
+        self.assertEqual([line.text for line in result], first + ["新增消息"])
+
+    def test_similar_commands_are_not_ocr_nickname_duplicates(self):
+        first = ["共同上下文第一行内容", "共同上下文第二行内容", "共同上下文第三行内容", "run --level=1"]
+        second = ["共同上下文第一行内容", "共同上下文第二行内容", "共同上下文第三行内容", "run --level=2", "结束"]
+        merged = [line.text for line in merge_pages([[Line(text) for text in page] for page in [first, second]])]
+        self.assertIn("run --level=1", merged)
+        self.assertIn("run --level=2", merged)
+
     def test_collected_and_imported_duplicates_keep_only_one(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

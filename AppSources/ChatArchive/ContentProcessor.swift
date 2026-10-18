@@ -8,7 +8,12 @@ struct ContentProcessor {
     func mergePages(_ pages: [[RecognizedLine]]) -> [String] {
         var result: [String] = []
         for page in pages {
-            let lines = page.map(\.text).filter(isUseful)
+            let hasHeader = page.prefix(4).contains { isRecordHeading($0.text) }
+            let lines = page.enumerated().filter { index, line in
+                let atTop = line.bounds == .zero ? index < 4 : line.bounds.maxY > 0.88
+                return isUseful(line.text) && !(atTop && (isRecordHeading(line.text)
+                    || (hasHeader && isHeaderControl(line.text))))
+            }.map { $0.element.text }
             appendWithOverlap(lines, to: &result)
         }
         return result
@@ -17,7 +22,11 @@ struct ContentProcessor {
     func mergeAccessibilityPages(_ pages: [[String]]) -> [String] {
         var result: [String] = []
         for page in pages {
-            appendWithOverlap(page.filter(isUseful), to: &result)
+            let hasHeader = page.prefix(4).contains(where: isRecordHeading)
+            let lines = page.enumerated().filter { index, text in
+                isUseful(text) && !(index < 4 && (isRecordHeading(text) || (hasHeader && isHeaderControl(text))))
+            }.map(\.element)
+            appendWithOverlap(lines, to: &result)
         }
         return result
     }
@@ -147,25 +156,21 @@ struct ContentProcessor {
     }
 
     private func appendWithOverlap(_ incoming: [String], to result: inout [String]) {
-        guard !incoming.isEmpty else { return }
-        let maxOverlap = min(result.count, incoming.count)
-        var overlap = 0
-        if maxOverlap > 0 {
-            for count in stride(from: maxOverlap, through: 1, by: -1) {
-                let suffix = result.suffix(count).map(normalized)
-                let prefix = incoming.prefix(count).map(normalized)
-                if Array(suffix) == Array(prefix) {
-                    overlap = count
-                    break
-                }
-            }
-        }
-        result.append(contentsOf: incoming.dropFirst(overlap))
+        result = PageOverlap.merge(result, incoming)
     }
 
     private func isUseful(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         return !trimmed.isEmpty && !ignored.contains(trimmed)
+    }
+
+    private func isRecordHeading(_ text: String) -> Bool {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.hasSuffix("的聊天记录") || text.lowercased().hasSuffix("chat history")
+    }
+
+    private func isHeaderControl(_ text: String) -> Bool {
+        Set(["●", "••●", "•••", "···", "..."]).contains(text.trimmingCharacters(in: .whitespaces))
     }
 
     private func normalized(_ text: String) -> String {
