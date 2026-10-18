@@ -11,6 +11,21 @@ from archive_core import Cancelled, Line, archive_workspace, digest, export_arch
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_collected_and_imported_duplicates_keep_only_one(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            imported = root / "manual.jpg"
+            imported.write_bytes(b"same original")
+            with archive_workspace(root) as folder:
+                first, repeated = folder / "saved.jpg", folder / "overlap.jpg"
+                first.write_bytes(b"same original")
+                repeated.write_bytes(b"same original")
+                report = export_archive(root, [], [imported, first, repeated, repeated], existing_directory=folder)
+                self.assertEqual(report.image_count, 1)
+                self.assertFalse(report.warnings)
+                self.assertEqual({p.name for p in folder.iterdir()}, {report.markdown_path.name, "saved.jpg"})
+                self.assertTrue(imported.is_file())
+
     def test_search_window_is_not_merged_record(self):
         self.assertFalse(is_merged_record_title("搜索聊天记录"))
         self.assertFalse(is_merged_record_title("Search chat history"))

@@ -26,12 +26,21 @@ struct MarkdownExporter {
         var saved: [(name: String, kind: String, original: Bool)] = []
         var warnings = attachmentWarnings
         var hashes = Set<String>()
+        var canonicalFiles: [String: URL] = [:]
+        var processedPaths = Set<URL>()
         var savedOriginalNames = Set<String>()
         if !manager.fileExists(atPath: staging.appendingPathComponent(markdownName).path) {
             try Data().write(to: staging.appendingPathComponent(markdownName), options: .withoutOverwriting)
         }
-        for source in sourceFiles {
+        // Prefer files already saved in the final directory over importing another identical copy.
+        let orderedSources = sourceFiles.enumerated().sorted { lhs, rhs in
+            let leftInside = lhs.element.deletingLastPathComponent().standardizedFileURL == staging.standardizedFileURL
+            let rightInside = rhs.element.deletingLastPathComponent().standardizedFileURL == staging.standardizedFileURL
+            return leftInside == rightInside ? lhs.offset < rhs.offset : leftInside
+        }.map(\.element)
+        for source in orderedSources {
             try Task.checkCancellation()
+            guard processedPaths.insert(source.standardizedFileURL).inserted else { continue }
             do {
                 let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true, (values.fileSize ?? 0) > 0 else {
@@ -39,15 +48,22 @@ struct MarkdownExporter {
                     continue
                 }
                 let digest = try ArchiveFiles.digest(source)
-                if source.deletingLastPathComponent().standardizedFileURL == staging.standardizedFileURL {
-                    guard source.lastPathComponent != markdownName else { continue }
-                    hashes.insert(digest)
-                    savedOriginalNames.insert(source.lastPathComponent.lowercased())
-                    saved.append((source.lastPathComponent, ArchiveFiles.kind(source), true))
-                    continue
-                }
+                let inside = source.deletingLastPathComponent().standardizedFileURL == staging.standardizedFileURL
                 if hashes.contains(digest) {
                     savedOriginalNames.insert(source.lastPathComponent.lowercased())
+                    if inside, let kept = canonicalFiles[digest], kept.standardizedFileURL != source.standardizedFileURL,
+                       try ArchiveFiles.digest(kept) == digest {
+                        // Only a duplicate in this newly-created export directory; the verified first copy remains.
+                        try manager.removeItem(at: source)
+                    }
+                    continue
+                }
+                if inside {
+                    guard source.lastPathComponent != markdownName else { continue }
+                    hashes.insert(digest)
+                    canonicalFiles[digest] = source
+                    savedOriginalNames.insert(source.lastPathComponent.lowercased())
+                    saved.append((source.lastPathComponent, ArchiveFiles.kind(source), true))
                     continue
                 }
                 let destination = ArchiveFiles.uniqueURL(in: staging, name: source.lastPathComponent)
@@ -59,6 +75,7 @@ struct MarkdownExporter {
                     throw error
                 }
                 hashes.insert(digest)
+                canonicalFiles[digest] = destination
                 savedOriginalNames.insert(source.lastPathComponent.lowercased())
                 saved.append((destination.lastPathComponent, ArchiveFiles.kind(source), true))
             } catch {

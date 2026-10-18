@@ -3,6 +3,28 @@ import CoreGraphics
 @testable import ChatArchive
 
 final class MediaRegionTests: XCTestCase {
+    func testExporterDeduplicatesCollectedAndImportedCopies() throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("ChatArchiveTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let workspace = try ArchiveWorkspace(parent: parent)
+        let imported = parent.appendingPathComponent("manual.jpg")
+        let first = workspace.directory.appendingPathComponent("saved.jpg")
+        let repeated = workspace.directory.appendingPathComponent("overlap.jpg")
+        for url in [imported, first, repeated] { try Data("identical image".utf8).write(to: url) }
+        let report = try MarkdownExporter().export(lines: [], attachments: [], fileNames: [], quoteKeys: [], pages: 1,
+                                                 usedAccessibility: false, sourceFiles: [imported, first, repeated, repeated],
+                                                 existingDirectory: workspace.directory, to: parent)
+        XCTAssertEqual(report.imageCount, 1)
+        XCTAssertEqual(report.missingAttachmentCount, 0)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: workspace.directory.path)),
+                       Set([workspace.markdownURL.lastPathComponent, "saved.jpg"]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: imported.path))
+        let md = try String(contentsOf: workspace.markdownURL, encoding: .utf8)
+        XCTAssertTrue(md.contains("[照片：saved.jpg]"))
+        XCTAssertFalse(md.contains("overlap.jpg"))
+    }
+
     @MainActor
     func testOverlappingPageDownloadKeepsOneVerifiedCopy() async throws {
         let parent = FileManager.default.temporaryDirectory.appendingPathComponent("ChatArchiveTests-\(UUID().uuidString)")

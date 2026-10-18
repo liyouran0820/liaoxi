@@ -161,24 +161,36 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
             (stage / markdown_name).touch(exist_ok=False)
         saved: list[tuple[str, str]] = []
         hashes = set()
+        canonical_files = {}
+        processed_paths = set()
         saved_names = set()
-        for source in sources:
+        ordered_sources = sorted(enumerate(sources), key=lambda item: (Path(item[1]).parent.resolve() != stage.resolve(), item[0]))
+        for _, source in ordered_sources:
             check_cancel(stop)
             source = Path(source)
+            normalized_path = source.resolve()
+            if normalized_path in processed_paths:
+                continue
+            processed_paths.add(normalized_path)
             destination = None
             try:
                 if source.is_symlink() or not source.is_file() or source.stat().st_size == 0:
                     raise ValueError("为空、是链接或不是普通文件")
                 sha = digest(source)
-                if source.parent.resolve() == stage.resolve():
+                inside = source.parent.resolve() == stage.resolve()
+                if sha in hashes:
+                    saved_names.add(source.name.casefold())
+                    kept = canonical_files.get(sha)
+                    if inside and kept is not None and kept.resolve() != source.resolve() and digest(kept) == sha:
+                        source.unlink()  # Task-created duplicate in the export; verified first copy remains.
+                    continue
+                if inside:
                     if source.name == markdown_name:
                         continue
                     kind = "照片" if source.suffix.lower() in IMAGES else "视频" if source.suffix.lower() in VIDEOS else "文档 / 文件"
                     saved.append((source.name, kind))
                     hashes.add(sha)
-                    saved_names.add(source.name.casefold())
-                    continue
-                if sha in hashes:
+                    canonical_files[sha] = source
                     saved_names.add(source.name.casefold())
                     continue
                 destination = unique_path(stage, source.name)
@@ -188,6 +200,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
                 kind = "照片" if source.suffix.lower() in IMAGES else "视频" if source.suffix.lower() in VIDEOS else "文档 / 文件"
                 saved.append((destination.name, kind))
                 hashes.add(sha)
+                canonical_files[sha] = destination
                 saved_names.add(source.name.casefold())
             except (OSError, ValueError) as error:
                 if destination is not None and destination.exists() and destination.name != "conversation.md":
