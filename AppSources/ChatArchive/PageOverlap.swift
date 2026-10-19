@@ -34,11 +34,13 @@ enum PageOverlap {
                     j -= 1; steps.append((nil, j))
                 }
             }
-            let anchors = Set(matches.map { ak[$0.0] }.filter { $0.count >= 6 && !isTimestamp($0) })
+            let anchors = Set(matches.filter { !AttachmentTimeline.isMarker(a[$0.0]) }
+                .map { ak[$0.0] }.filter { $0.count >= 6 && !isTimestamp($0) })
+            let mediaAnchors = Set(matches.map { a[$0.0] }.filter(AttachmentTimeline.isMarker))
             let matchedLeft = Set(matches.map(\.0)), matchedRight = Set(matches.map(\.1))
             let oldTimes = (i..<n).filter { !matchedLeft.contains($0) && isCompleteTimestamp(ak[$0]) }
             let newTimes = (0..<end).filter { !matchedRight.contains($0) && isCompleteTimestamp(bk[$0]) }
-            guard matches.count >= 3, anchors.reduce(0, { $0 + $1.count }) >= 12,
+            guard matches.count >= 3, anchors.reduce(0, { $0 + $1.count }) + mediaAnchors.count * 8 >= 12,
                   oldTimes.isEmpty || newTimes.isEmpty,
                   Double(matches.count) / Double(max(n - i, end)) >= 0.7,
                   (matches.map(\.1).min() ?? 3) <= 2,

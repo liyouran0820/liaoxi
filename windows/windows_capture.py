@@ -7,7 +7,7 @@ import re
 import sys
 import uuid
 
-from archive_core import Line, archive_workspace, check_cancel, digest, export_archive, file_names, is_merged_record_title, key, mark_quotes, merge_pages, unique_path
+from archive_core import Line, archive_workspace, attachment_marker, check_cancel, digest, export_archive, file_names, insert_attachment_lines, is_merged_record_title, key, mark_quotes, merge_pages, unique_path
 
 
 class WeChatCapture:
@@ -343,6 +343,7 @@ class WeChatCapture:
         warnings = []
         any_ax = False
         downloaded_hashes = {}
+        attachment_references = {}
         with archive_workspace(Path(parent)) as temporary:
             temporary = Path(temporary)
             top_signature = None
@@ -373,14 +374,15 @@ class WeChatCapture:
                 lines = await self.recognize(text_image)
                 lines, used_ax = self.accessible_text(window, lines)
                 any_ax |= used_ax
-                pages.append(lines)
+                placements = []
                 candidates = [(line.x + line.width / 2, line.y + line.height / 2, line.text) for line in lines if file_names([line])]
                 for x, y, w, h in regions:
                     context = "|".join(line.text for line in lines if 0 < y - line.y < .1)
                     candidates.append((x + w / 2, y + h / 2, f"media|{context}|{w:.2f}|{h:.2f}"))
                 for x, y, identity in candidates:
-                    if identity in attempted or not (.05 < y < .92):
+                    if not (.05 < y < .92):
                         continue
+                    # Similar context / thumbnail dimensions do not prove these are the same file.
                     attempted.add(identity)
                     try:
                         for file in await self.save_candidate(window, x, y, temporary):
@@ -388,14 +390,18 @@ class WeChatCapture:
                             first = downloaded_hashes.get(sha)
                             if first is not None and first != file and digest(first) == sha:
                                 file.unlink()  # Fresh collector-created duplicate; verified first copy remains.
+                                file = first
                             else:
                                 downloaded_hashes[sha] = file
                                 files.append(file)
+                            placements.append((x, y, file))
+                            attachment_references[attachment_marker(file)] = file
                     except Exception as error:
                         rect = window.rectangle()
                         self.mouse.click(coords=(rect.left + rect.width() // 2, rect.top + 55))
                         check_cancel(self.stop)
                         warnings.append(f"附件自动另存失败：{type(error).__name__}，可使用补充附件。")
+                pages.append(insert_attachment_lines(lines, placements))
                 self.scroll(window, -max(2, int(window.rectangle().height() * .55 / 120)))
             if not reached_bottom:
                 warnings.append("已达到 100 屏上限，请检查记录是否完整。")
@@ -406,7 +412,7 @@ class WeChatCapture:
                 warnings.append("微信未提供可自动保存的原附件。请将附件在微信另存后，通过“补充附件”重新导出。")
             return export_archive(Path(parent), lines, files, warnings=warnings, pages=len(pages),
                                   text_source="Windows UI Automation + 系统 OCR" if any_ax else "Windows 本地 OCR", stop=self.stop,
-                                  existing_directory=temporary)
+                                  existing_directory=temporary, attachment_references=attachment_references)
 
 
 def win32clipboard_sequence():

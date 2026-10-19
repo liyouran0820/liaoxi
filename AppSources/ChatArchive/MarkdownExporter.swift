@@ -10,6 +10,7 @@ struct MarkdownExporter {
         pages: Int,
         usedAccessibility: Bool,
         sourceFiles: [URL] = [],
+        attachmentReferences: [String: URL] = [:],
         attachmentWarnings: [String] = [],
         existingDirectory: URL? = nil,
         to parentDirectory: URL
@@ -27,6 +28,7 @@ struct MarkdownExporter {
         var warnings = attachmentWarnings
         var hashes = Set<String>()
         var canonicalFiles: [String: URL] = [:]
+        var sourceNames: [URL: String] = [:]
         var processedPaths = Set<URL>()
         var savedOriginalNames = Set<String>()
         if !manager.fileExists(atPath: staging.appendingPathComponent(markdownName).path) {
@@ -50,6 +52,7 @@ struct MarkdownExporter {
                 let digest = try ArchiveFiles.digest(source)
                 let inside = source.deletingLastPathComponent().standardizedFileURL == staging.standardizedFileURL
                 if hashes.contains(digest) {
+                    sourceNames[source.standardizedFileURL] = canonicalFiles[digest]?.lastPathComponent
                     savedOriginalNames.insert(source.lastPathComponent.lowercased())
                     if inside, let kept = canonicalFiles[digest], kept.standardizedFileURL != source.standardizedFileURL,
                        try ArchiveFiles.digest(kept) == digest {
@@ -62,6 +65,7 @@ struct MarkdownExporter {
                     guard source.lastPathComponent != markdownName else { continue }
                     hashes.insert(digest)
                     canonicalFiles[digest] = source
+                    sourceNames[source.standardizedFileURL] = source.lastPathComponent
                     savedOriginalNames.insert(source.lastPathComponent.lowercased())
                     saved.append((source.lastPathComponent, ArchiveFiles.kind(source), true))
                     continue
@@ -76,6 +80,7 @@ struct MarkdownExporter {
                 }
                 hashes.insert(digest)
                 canonicalFiles[digest] = destination
+                sourceNames[source.standardizedFileURL] = destination.lastPathComponent
                 savedOriginalNames.insert(source.lastPathComponent.lowercased())
                 saved.append((destination.lastPathComponent, ArchiveFiles.kind(source), true))
             } catch {
@@ -104,11 +109,22 @@ struct MarkdownExporter {
         markdown += "## 内容样式说明（供 LLM 阅读）\n\n"
         markdown += "- **正文样式**：不带引用前缀的普通文本，表示当前消息正文。\n"
         markdown += "- **引用样式**：以 `> ` 开头的 Markdown 引用块，表示微信正文下方灰色的被引用原消息；它是上下文，不是当前发送者的新正文。\n"
-        markdown += "- **附件样式**：照片、视频和文档单独保存，只按类型、实际文件名和相对链接引用。照片和视频内部的文字不转写进正文，LLM 可按文件名读取对应附件。\n"
+        markdown += "- **附件样式**：对话原位置的附件链接表示该处发送的照片、视频或文档，文件名与同目录原文件对应；文末仅为附件索引，不是新增消息。照片和视频内部的文字不转写进正文。位置未确定的补充附件只列在索引中，不推测发送者或时间。\n"
         markdown += "- **缺失附件**：见文末“未保存的附件”；未下载成功、过期或未选择的文件不视为已保存。\n\n"
         markdown += "## 对话内容\n\n"
         var wasQuote = false
+        var locatedNames = Set<String>()
         for line in lines {
+            if let source = attachmentReferences[line] {
+                if wasQuote { markdown += "\n" }; wasQuote = false
+                if let name = sourceNames[source.standardizedFileURL], let file = saved.first(where: { $0.name == name }) {
+                    markdown += "\n[\(file.kind)：\(escaped(name))](\(ArchiveFiles.relativeLink(name)))  \n\n"
+                    locatedNames.insert(name)
+                } else {
+                    markdown += "\n[附件未保存：\(escaped(source.lastPathComponent))]  \n\n"
+                }
+                continue
+            }
             let isQuote = quoteKeys.contains(key(line))
             if wasQuote != isQuote { markdown += "\n" }
             markdown += (isQuote ? "> " : "") + escaped(line) + "  \n"
@@ -119,7 +135,7 @@ struct MarkdownExporter {
         for file in saved {
             let link = ArchiveFiles.relativeLink(file.name)
             let label = escaped(file.name)
-            markdown += "[\(file.kind)：\(label)](\(link))\n\n"
+            markdown += "[\(file.kind)：\(label)](\(link))" + (locatedNames.contains(file.name) ? "" : " — 聊天位置未确定") + "\n\n"
         }
         if !warnings.isEmpty {
             markdown += "## 未保存的附件 / 提取提示\n\n"
@@ -129,13 +145,14 @@ struct MarkdownExporter {
         let originalImages = saved.filter { $0.original && $0.kind == "照片" }.count
         let videos = saved.filter { $0.kind == "视频" }.count
         let documents = saved.filter { $0.kind == "文档 / 文件" }.count
-        markdown += "## 提取信息\n\n读取 \(pages) 屏，\(lines.count) 行文字；保存 \(originalImages) 张照片、\(videos) 个视频、\(documents) 个文件。\n"
+        let textLineCount = lines.filter { attachmentReferences[$0] == nil }.count
+        markdown += "## 提取信息\n\n读取 \(pages) 屏，\(textLineCount) 行文字；保存 \(originalImages) 张照片、\(videos) 个视频、\(documents) 个文件。\n"
         try markdown.write(to: staging.appendingPathComponent(markdownName), atomically: true, encoding: .utf8)
         try Task.checkCancellation()
         if existingDirectory == nil { try manager.moveItem(at: staging, to: folder) }
         committed = true
         let md = folder.appendingPathComponent(markdownName)
-        return ExtractionReport(markdownURL: md, reportURL: md, textLineCount: lines.count,
+        return ExtractionReport(markdownURL: md, reportURL: md, textLineCount: textLineCount,
                                 imageCount: originalImages, pageCount: pages, usedAccessibilityText: usedAccessibility,
                                 fileCount: documents, videoCount: videos, missingAttachmentCount: warnings.count)
     }

@@ -37,6 +37,8 @@ struct ExtractionPipeline {
 
         var pageLines: [[RecognizedLine]] = []
         var accessibilityPages: [[String]] = []
+        var timelinePages: [[RecognizedLine]] = []
+        var attachmentReferences: [String: URL] = [:]
         var previousDigest: String?
         var reachedBottom = false
 
@@ -64,7 +66,9 @@ struct ExtractionPipeline {
             accessibilityPages.append(processor.visibleAccessibilityText(accessibilityText, matching: lines))
 
             progress("正在保存第 \(index + 1) 屏的附件…")
-            try await collector.collect(target: target, lines: lines, regions: mediaRegions)
+            let placements = try await collector.collect(target: target, lines: lines, regions: mediaRegions)
+            timelinePages.append(AttachmentTimeline.inserting(placements, into: lines))
+            for placement in placements { attachmentReferences[placement.marker] = placement.file }
 
             try await captureService.activateAndScroll(target: target, delta: -Int32(target.window.frame.height * 0.55))
         }
@@ -72,6 +76,8 @@ struct ExtractionPipeline {
         let ocrLines = processor.mergePages(pageLines)
         let accessibilityLines = processor.mergeAccessibilityPages(accessibilityPages)
         let chosen = processor.chooseText(accessibility: accessibilityLines, ocr: ocrLines)
+        let timeline = processor.mergePages(timelinePages)
+        let positionedLines = chosen.usedAccessibility ? AttachmentTimeline.projecting(timeline, onto: chosen.lines) : timeline
         guard !chosen.lines.isEmpty else { throw ExtractionError.noContent }
         let quoteKeys = processor.quoteKeys(in: pageLines)
 
@@ -86,13 +92,14 @@ struct ExtractionPipeline {
         progress("正在生成 Markdown…")
         try Task.checkCancellation()
         let report = try exporter.export(
-            lines: chosen.lines,
+            lines: positionedLines,
             attachments: [],
             fileNames: fileNames,
             quoteKeys: quoteKeys,
             pages: pageLines.count,
             usedAccessibility: chosen.usedAccessibility,
             sourceFiles: sourceFiles + collector.files,
+            attachmentReferences: attachmentReferences,
             attachmentWarnings: warnings,
             existingDirectory: workspace.directory,
             to: outputDirectory

@@ -42,6 +42,25 @@ def key(text: str) -> str:
     return value or text.strip()
 
 
+def attachment_marker(file: Path) -> str:
+    return "[[liaoxi-attachment:" + hashlib.sha256(str(Path(file).resolve()).encode()).hexdigest() + "]]"
+
+
+def is_attachment_marker(text: str) -> bool:
+    return text.startswith("[[liaoxi-attachment:") and text.endswith("]]")
+
+
+def insert_attachment_lines(lines: list[Line], placements: list[tuple[float, float, Path]]) -> list[Line]:
+    result = list(lines)
+    for x, y, file in placements:
+        marker = attachment_marker(file)
+        if any(line.text == marker and abs(line.y + line.height / 2 - y) < .01 for line in result):
+            continue
+        position = next((i for i, line in enumerate(result) if line.y + line.height / 2 > y), len(result))
+        result.insert(position, Line(marker, x=x, y=y))
+    return result
+
+
 def is_merged_record_title(title: str) -> bool:
     title = title.strip()
     lower = title.lower()
@@ -143,12 +162,13 @@ def _merge_overlap(previous: list[Line], incoming: list[Line]) -> list[Line]:
             else:
                 j -= 1
                 steps.append((None, j))
-        anchors = {key(a[x].text) for x, _ in matches if len(key(a[x].text)) >= 6
+        anchors = {key(a[x].text) for x, _ in matches if not is_attachment_marker(a[x].text) and len(key(a[x].text)) >= 6
                    and not re.search(r"\d{4}年\d{1,2}月\d{1,2}日", key(a[x].text))}
+        media_anchors = {a[x].text for x, _ in matches if is_attachment_marker(a[x].text)}
         matched_left, matched_right = {x for x, _ in matches}, {y for _, y in matches}
         old_times = [x for x in range(i, n) if x not in matched_left and re.fullmatch(r"\d{4}年\d{1,2}月\d{1,2}日\d{4}", key(a[x].text))]
         new_times = [y for y in range(end) if y not in matched_right and re.fullmatch(r"\d{4}年\d{1,2}月\d{1,2}日\d{4}", key(b[y].text))]
-        if (len(matches) < 3 or sum(map(len, anchors)) < 12
+        if (len(matches) < 3 or sum(map(len, anchors)) + len(media_anchors) * 8 < 12
                 or (old_times and new_times)
                 or len(matches) / max(n-i, end) < .7
                 or min(y for _, y in matches) > 2 or max(x for x, _ in matches) < n - 3):
@@ -254,11 +274,12 @@ def archive_workspace(parent: Path):
 
 def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warnings: list[str] | None = None,
                    pages: int = 0, text_source: str = "Windows UI Automation / 系统 OCR", stop=None,
-                   existing_directory: Path | None = None) -> Report:
+                   existing_directory: Path | None = None, attachment_references: dict[str, Path] | None = None) -> Report:
     parent = Path(parent)
     if not parent.is_dir():
         raise ValueError("请选择存在的导出目录。")
     warnings = list(warnings or [])
+    attachment_references = attachment_references or {}
     folder = Path(existing_directory) if existing_directory else unique_path(parent, f"微信聊天记录-{datetime.now():%Y-%m-%d-%H%M%S}")
     markdown_name = folder.name + ".md"
     stage = folder if existing_directory else Path(tempfile.mkdtemp(prefix=".聊析-", dir=parent))
@@ -268,6 +289,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
         saved: list[tuple[str, str]] = []
         hashes = set()
         canonical_files = {}
+        source_names = {}
         processed_paths = set()
         saved_names = set()
         ordered_sources = sorted(enumerate(sources), key=lambda item: (Path(item[1]).parent.resolve() != stage.resolve(), item[0]))
@@ -285,6 +307,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
                 sha = digest(source)
                 inside = source.parent.resolve() == stage.resolve()
                 if sha in hashes:
+                    source_names[source.resolve()] = canonical_files[sha].name
                     saved_names.add(source.name.casefold())
                     kept = canonical_files.get(sha)
                     if inside and kept is not None and kept.resolve() != source.resolve() and digest(kept) == sha:
@@ -297,6 +320,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
                     saved.append((source.name, kind))
                     hashes.add(sha)
                     canonical_files[sha] = source
+                    source_names[source.resolve()] = source.name
                     saved_names.add(source.name.casefold())
                     continue
                 destination = unique_path(stage, source.name)
@@ -307,6 +331,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
                 saved.append((destination.name, kind))
                 hashes.add(sha)
                 canonical_files[sha] = destination
+                source_names[source.resolve()] = destination.name
                 saved_names.add(source.name.casefold())
             except (OSError, ValueError) as error:
                 if destination is not None and destination.exists() and destination.name != "conversation.md":
@@ -314,17 +339,29 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
                     if destination.name not in {name for name, _ in saved}:
                         destination.unlink()
                 warnings.append(f"{source.name}：原文件未保存（{error}）。")
-        for name in file_names(lines):
+        for name in file_names([line for line in lines if line.text not in attachment_references]):
             if name.casefold() not in saved_names:
                 warnings.append(f"{name}：检测到文件卡片，未取得原文件。可在微信另存后使用“补充附件”。")
         md = ["# 微信合并聊天记录", "", f"提取时间：{datetime.now():%Y-%m-%d %H:%M:%S}  ", f"文字来源：{text_source}", "",
               "## 内容样式说明（供 LLM 阅读）", "",
               "- **正文样式**：不带引用前缀的普通文本，表示当前消息正文。",
               "- **引用样式**：以 `> ` 开头的 Markdown 引用块，表示微信正文下方灰色的被引用原消息；它是上下文，不是当前发送者的新正文。",
-              "- **附件样式**：照片、视频和文档单独保存，只按类型、实际文件名和相对链接引用。照片和视频内部的文字不转写进正文，LLM 可按文件名读取对应附件。",
+              "- **附件样式**：对话原位置的附件链接表示该处发送的照片、视频或文档，文件名与同目录原文件对应；文末仅为附件索引，不是新增消息。照片和视频内部的文字不转写进正文。位置未确定的补充附件只列在索引中，不推测发送者或时间。",
               "- **缺失附件**：见文末“未保存的附件”；未下载成功、过期或未选择的文件不视为已保存。", "", "## 对话内容", ""]
         was_quote = False
+        located_names = set()
         for line in lines:
+            if line.text in attachment_references:
+                source = Path(attachment_references[line.text])
+                name = source_names.get(source.resolve())
+                if name is not None:
+                    kind = next(kind for saved_name, kind in saved if saved_name == name)
+                    md.extend(["", f"[{kind}：{escaped(name)}]({quote(name, safe='-._~')})  ", ""])
+                    located_names.add(name)
+                else:
+                    md.extend(["", f"[附件未保存：{escaped(source.name)}]  ", ""])
+                was_quote = False
+                continue
             if line.quoted != was_quote:
                 md.append("")
             md.append(("> " if line.quoted else "") + escaped(line.text) + "  ")
@@ -333,16 +370,18 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
         if not saved:
             md.extend(["本次未取得附件原文件。", ""])
         for name, kind in saved:
-            md.extend([f"[{kind}：{escaped(name)}]({quote(name, safe='-._~')})", ""])
+            suffix = "" if name in located_names else " — 聊天位置未确定"
+            md.extend([f"[{kind}：{escaped(name)}]({quote(name, safe='-._~')}){suffix}", ""])
         if warnings:
             md.extend(["## 未保存的附件 / 提取提示", ""] + [f"- {escaped(w)}" for w in warnings] + [""])
         counts = [sum(kind == k for _, kind in saved) for k in ("照片", "视频", "文档 / 文件")]
-        md.extend(["## 提取信息", "", f"读取 {pages} 屏，{len(lines)} 行文字；保存 {counts[0]} 张照片、{counts[1]} 个视频、{counts[2]} 个文件。", ""])
+        text_line_count = sum(line.text not in attachment_references for line in lines)
+        md.extend(["## 提取信息", "", f"读取 {pages} 屏，{text_line_count} 行文字；保存 {counts[0]} 张照片、{counts[1]} 个视频、{counts[2]} 个文件。", ""])
         (stage / markdown_name).write_text("\n".join(md), encoding="utf-8")
         check_cancel(stop)
         if not existing_directory:
             stage.rename(folder)
-        return Report(folder, len(lines), *counts, warnings)
+        return Report(folder, text_line_count, *counts, warnings)
     finally:
         if stage.exists() and not existing_directory:
             shutil.rmtree(stage)

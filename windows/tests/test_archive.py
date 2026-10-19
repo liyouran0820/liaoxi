@@ -7,10 +7,56 @@ import re
 from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from archive_core import Cancelled, Line, archive_workspace, digest, export_archive, is_merged_record_title, mark_quotes, merge_pages, safe_name
+from archive_core import Cancelled, Line, archive_workspace, attachment_marker, digest, export_archive, insert_attachment_lines, is_merged_record_title, mark_quotes, merge_pages, safe_name
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_media_message_position_and_repeated_occurrences(self):
+        file = Path('/tmp/image.jpg')
+        marker = attachment_marker(file)
+        lines = [Line('Alice', y=.1, height=.02), Line('时间', y=.1, height=.02), Line('下一条消息', y=.5, height=.02)]
+        result = insert_attachment_lines(lines, [(.1, .3, file), (.1, .3, file), (.1, .7, file)])
+        self.assertEqual([line.text for line in result], ['Alice', '时间', marker, '下一条消息', marker])
+        first = [Line(t) for t in ['Alice01', '2026年10月19日 01:00', marker]]
+        next_page = [Line(t) for t in ['Alice0l', '2026年10月19日01:00', marker, 'Bob', '2026年10月19日 01:01', marker]]
+        self.assertEqual([x.text for x in merge_pages([first, next_page])], [x.text for x in first + next_page[-3:]])
+
+    def test_inline_links_follow_renames_and_duplicate_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            a, b = root/'a', root/'b'
+            a.mkdir()
+            b.mkdir()
+            first, second, duplicate = a/'photo.jpg', b/'photo.jpg', b/'duplicate.jpg'
+            first.write_bytes(b'first image')
+            second.write_bytes(b'second image')
+            duplicate.write_bytes(b'first image')
+            m1, m2 = attachment_marker(second), attachment_marker(duplicate)
+            lines = [Line(t) for t in ['第一条消息', m1, '第二条消息', m2, '第三条消息', m2]]
+            report = export_archive(root, lines, [first, second, duplicate], attachment_references={m1: second, m2: duplicate})
+            md = report.markdown_path.read_text()
+            body = md.split('## 对话内容\n\n', 1)[1].split('## 附件', 1)[0]
+            self.assertIn('第一条消息  \n\n[照片：photo-2.jpg](photo-2.jpg)', body)
+            self.assertIn('第二条消息  \n\n[照片：photo.jpg](photo.jpg)', body)
+            self.assertEqual(body.count('[照片：photo.jpg]'), 2)
+            self.assertNotIn('[[liaoxi-attachment:', md)
+            self.assertNotIn('duplicate.jpg', md)
+            self.assertNotIn('聊天位置未确定', md)
+            self.assertEqual((report.line_count, report.image_count), (3, 2))
+
+    def test_unlocated_supplements_and_missing_files_have_no_fake_links(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            file, missing = root/'manual.mp4', root/'missing.pdf'
+            file.write_bytes(b'video')
+            marker = attachment_marker(missing)
+            report = export_archive(root, [Line('正文'), Line(marker)], [file, missing], attachment_references={marker: missing})
+            md = report.markdown_path.read_text()
+            self.assertIn('[附件未保存：missing.pdf]', md)
+            self.assertIn('[视频：manual.mp4](manual.mp4) — 聊天位置未确定', md)
+            self.assertNotIn('(missing.pdf)', md)
+            self.assertEqual(report.line_count, 1)
+
     def test_headers_and_ocr_nickname_do_not_duplicate_messages(self):
         first = ["●", "Alice和Bob的聊天记录", "••●", "Alice01", "2026年10月18日 22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件"]
         second = ["Alice和Bob的聊天记录", "•••", "Alice0l", "2026年10月18日22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件", "Bob", "2026年10月18日 22:46", "这是下一条消息"]
