@@ -36,7 +36,7 @@ final class MediaRegionTests: XCTestCase {
         try Data("same original bytes".utf8).write(to: first)
         try Data("same original bytes".utf8).write(to: duplicate)
         try collector.acceptSavedFile(first)
-        XCTAssertEqual(try collector.acceptSavedFile(duplicate), first)
+        try collector.acceptSavedFile(duplicate)
         XCTAssertEqual(collector.files, [first])
         XCTAssertTrue(FileManager.default.fileExists(atPath: first.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: duplicate.path))

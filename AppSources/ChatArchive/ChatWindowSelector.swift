@@ -1,15 +1,6 @@
 import Foundation
-import CoreGraphics
 
 enum ChatWindowSelector {
-    static func isOnConnectedDisplay(_ frame: CGRect, displays: [CGRect]) -> Bool {
-        guard frame.width > 0, frame.height > 0 else { return false }
-        return displays.contains { display in
-            let visible = frame.intersection(display)
-            return !visible.isNull && visible.width * visible.height >= frame.width * frame.height * 0.95
-        }
-    }
-
     static func isMergedRecordTitle(_ title: String) -> Bool {
         let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let lower = name.lowercased()

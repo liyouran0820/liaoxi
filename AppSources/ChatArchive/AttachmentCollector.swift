@@ -18,9 +18,8 @@ final class AttachmentCollector {
         self.directory = directory
     }
 
-    func collect(target: CapturableWindow, lines: [RecognizedLine], regions: [CGRect]) async throws -> [PositionedAttachment] {
+    func collect(target: CapturableWindow, lines: [RecognizedLine], regions: [CGRect]) async throws {
         try Task.checkCancellation()
-        var placements: [PositionedAttachment] = []
         let processor = ContentProcessor()
         var candidates: [(CGRect, String)] = []
         for (index, line) in lines.enumerated() {
@@ -36,13 +35,7 @@ final class AttachmentCollector {
         }
         for (rect, identity) in candidates.prefix(20) {
             try Task.checkCancellation()
-            guard rect.midY > 0.04, rect.midY < 0.92 else { continue }
-            // Context and thumbnail dimensions are not an attachment identity. Verify each visible occurrence.
-            attempted.insert(identity)
-            func note(_ file: URL) throws {
-                guard let retained = try acceptSavedFile(file) else { return }
-                placements.append(PositionedAttachment(file: retained, bounds: rect))
-            }
+            guard rect.midY > 0.04, rect.midY < 0.92, attempted.insert(identity).inserted else { continue }
             let location = CGPoint(x: target.window.frame.minX + rect.midX * target.window.frame.width,
                                    y: target.window.frame.minY + (1 - rect.midY) * target.window.frame.height)
             guard let app = NSRunningApplication(processIdentifier: target.application.processID) else { continue }
@@ -55,7 +48,7 @@ final class AttachmentCollector {
                 AXUIElementPerformAction(selected, kAXRaiseAction as CFString)
             } else {
                 warnings.append("聊天记录窗口已改变，已跳过附件操作。")
-                return placements
+                return
             }
             try await Task.sleep(nanoseconds: 350_000_000)
             click(location, button: .right)
@@ -72,7 +65,7 @@ final class AttachmentCollector {
                 do {
                     if perform(action), let file = try await saveDialog(root: root) {
                         CaptureDiagnostics.record("media-file-saved")
-                        try note(file)
+                        try acceptSavedFile(file)
                         continue
                     }
                 } catch {
@@ -117,35 +110,32 @@ final class AttachmentCollector {
                     let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                     guard values?.isRegularFile == true, values?.isSymbolicLink != true else { continue }
                     let destination = ArchiveFiles.uniqueURL(in: directory, name: url.lastPathComponent)
-                    do { try FileManager.default.copyItem(at: url, to: destination); try note(destination) }
+                    do { try FileManager.default.copyItem(at: url, to: destination); try acceptSavedFile(destination) }
                     catch { warnings.append("\(url.lastPathComponent)：微信复制的附件不可读，请另存后补充。") }
                 }
             } else if let data = board.data(forType: .png) {
                 let destination = ArchiveFiles.uniqueURL(in: directory, name: "wechat-image.png")
                 try data.write(to: destination, options: .withoutOverwriting)
-                try note(destination)
+                try acceptSavedFile(destination)
             } else if let data = board.data(forType: .tiff), let rep = NSBitmapImageRep(data: data),
                       let png = rep.representation(using: .png, properties: [:]) {
                 let destination = ArchiveFiles.uniqueURL(in: directory, name: "wechat-image.png")
                 try png.write(to: destination, options: .withoutOverwriting)
-                try note(destination)
+                try acceptSavedFile(destination)
             }
         }
-        return placements
     }
 
-    @discardableResult
-    func acceptSavedFile(_ file: URL) throws -> URL? {
-        guard file.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL else { return nil }
+    func acceptSavedFile(_ file: URL) throws {
+        guard file.deletingLastPathComponent().standardizedFileURL == directory.standardizedFileURL else { return }
         let hash = try ArchiveFiles.digest(file)
         if let first = seenFiles[hash], first != file, try ArchiveFiles.digest(first) == hash {
             // This is the fresh duplicate just saved by this collector; retain the verified first copy.
             try FileManager.default.removeItem(at: file)
-            return first
+            return
         }
         seenFiles[hash] = file
         if !files.contains(file) { files.append(file) }
-        return file
     }
 
     private func saveDialog(root: AXUIElement) async throws -> URL? {
