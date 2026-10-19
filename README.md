@@ -1,61 +1,41 @@
 # 聊析
 
-聊析｜面向 LLM 的微信聊天记录整理工具，支持 macOS 与 Windows。将合并聊天记录导出为 Markdown，并将照片、视频和文档统一保存在同一文件夹中。
-
-## 一键下载
-
-- [macOS 通用版（DMG，Apple Silicon / Intel）](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-macOS-universal.dmg)
-- [Windows x64 独立版（EXE，无需 Python）](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-Windows-x64.exe)
-- [Windows ZIP 备用下载](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-Windows-x64.zip)
-- [全部版本与校验文件](https://github.com/liyouran0820/liaoxi/releases)
-
-macOS 打开 DMG，将“聊析”拖到 Applications。Windows 下载 EXE 后直接运行。系统 OCR 需已安装中文或英语语言功能。
+面向 LLM 的微信聊天记录整理工具，支持 macOS 与 Windows。当前默认流程为**手动复制粘贴文字，再整理本地附件**，不使用 OCR，不读取微信窗口，不需要辅助功能或屏幕录制权限。
 
 ## 使用
 
-1. 在微信中多选消息，合并转发给文件传输助手。
-2. 在电脑端微信（macOS 或 Windows）打开这条合并聊天记录，并保持窗口可见。
-3. 打开对应系统的聊析：macOS 首次使用需授予“辅助功能”和“屏幕录制”权限；Windows 点击“刷新窗口”，选择对应的合并聊天记录窗口。
-4. 选择导出位置。需要保留的本地照片、视频和文档可以通过“补充附件”多选加入。
-5. 点击“开始提取”。程序逐屏读取，并尝试通过微信可见的“另存为”或“复制”菜单保存附件。
-
-提取过程中可以随时点击“停止”；已保存的附件会保留在同名文件夹，Markdown 会标明提取未完成。
-
-**macOS 权限：** 两个权限的“打开设置”会分别进入“隐私与安全性”中的对应页面。在列表中打开“聊析”开关后返回应用，状态会自动刷新。屏幕录制通常需要重新打开应用，请按系统提示操作。
-
-建议使用安装在 `/Applications/聊析.app` 的固定版本。移动应用位置或更换签名会让 macOS 重新请求隐私权限。
-
-macOS 使用合并记录在屏幕上实际可见的矩形区域取图。请将该记录完整放在同一屏幕内并置于最前，提取时不要覆盖窗口、切换应用、打开单张照片预览或进入截图模式。程序在取图前后检查窗口 ID、所属进程、系统原生标题、位置与遮挡，不再要求截图昵称必须通过标题 OCR 才能读取正文；校验失败会停止本次提取。macOS 15.2 及以上直接调用系统矩形截图接口，较旧系统使用显示器相对区域接口。图片内部不做 OCR 的规则不变，附件仍优先通过微信另存 / 复制保留原文件。若失败，Markdown 会记录具体错误；用户主动停止与提取错误分别标注。
-
-**Windows 窗口选择：** 若没有找到记录，请先在微信打开合并记录卡片，再点“刷新窗口”。Windows 无需授予 macOS 的上述两项权限，但需安装中文或英语 OCR 语言功能；操作详情见 [Windows 说明](windows/README.md)。
-
-输出目录包含：
+1. 在微信复制需要的文字，在聊析“聊天内容”中粘贴（Mac ⌘V / Windows Ctrl+V，或点击“粘贴”）。
+2. 自行从微信保存照片、视频和文档。在编辑区把光标放到对应的对话之间，点击“补充附件”多选加入。
+3. 编辑区会出现 `[[照片 1：photo.jpg]]` 等标记。可整体剪切 / 粘贴标记到所需位置，不要改标记内部字符。导出时替换为实际文件名和相对链接。
+4. 选择导出位置，点击“导出 Markdown”。每次新建同名文件夹，不覆盖旧记录。
 
 ```text
 微信聊天记录-时间/
 ├── 微信聊天记录-时间.md
-├── 照片.png
-├── 视频.mp4
+├── photo.jpg
+├── video.mp4
 └── 教程.pdf
 ```
 
-每次先创建与 Markdown 同名的总文件夹。附件从保存时就直接进入该文件夹，与 Markdown 平铺放置，不额外生成报告文件或附件子目录。Markdown 仅列出照片、视频、文档的类型、实际文件名及相对链接；媒体区域在文字 OCR 前排除，不将照片或视频内部文字转写为正文。复制的原文件进行 SHA-256 校验，缺失附件写入文末。
+正文按手动顺序输出，例如“A 的消息 → 照片链接 → B 的消息”。照片、视频不识别文字；附件与 Markdown 平铺于同一文件夹，可整体提供给支持相应格式的 LLM。
 
-正文保留原来的采集、文字选择与去重流程。导出时再根据保存附件时记录的相邻文字，插入“类型：实际文件名”的相对链接，形成“A 的消息 → 照片链接 → B 的消息”；附件位置资料不会混入 OCR 或正文去重，也不会替换消息行。文末列表仅为索引。手动补充附件或无法唯一对应位置的附件标注“聊天位置未确定”，不猜测发送者或时间。
+粘贴保留原文字、换行、Markdown 和重复消息，不猜测发言者、不自动去重。纯文本会丢失微信颜色：引用请自行在行首加 `> `。文档开头会向 LLM 说明正文、引用和附件样式。
 
-自动保存、跨屏重复与“补充附件”统一按文件内容去重：相同内容只保留一个实际附件和一条索引；同一文件在不同消息位置实际出现时，分别引用该文件。外部补充附件的源文件不会删除。
+附件按 SHA-256 内容去重，同一内容只保存一份，不同消息位置仍可重复引用。同名不同内容自动编号，复制后校验；源文件不删除。失败项标为“附件未保存”，不生成假链接。删除标记不会移除附件，文末仍标注“未插入正文”；“清空附件”清除本次附件和标记，不删除原文件。
 
-文字按相邻屏的末尾 / 开头进行顺序对齐，排除顶部窗口标题与菜单符号，并容忍有上下文支持的昵称、残缺时间 OCR 差异。不对全文做相同句子删除；不同位置真实发送的同文消息、引用和重叠区新识别到的内容仍保留。上下文不足时保守保留，OCR 不保证完全准确。
+编辑草稿仅在当前窗口内存中，关闭前请导出。开始导出后先保存文字快照；停止 / 失败时尽可能保留已写入的文字及附件。大文件复制时，停止可能要等当前文件操作完成。
 
-## Windows
+## 下载与版本边界
 
-Windows 10/11 x64，发布版独立 EXE 自带运行环境，无需安装 Python。源码启动包仍可通过 Python 3.12 x64 运行 `start.cmd`。详见 [Windows 使用与打包说明](windows/README.md)。
+- [已发布版本](https://github.com/liyouran0820/liaoxi/releases)
+- [macOS 历史 v0.2.0 DMG](https://github.com/liyouran0820/liaoxi/releases/download/v0.2.0/ChatArchive-macOS-universal.dmg)
+- [Windows 历史 v0.2.0 EXE](https://github.com/liyouran0820/liaoxi/releases/download/v0.2.0/ChatArchive-Windows-x64.exe)
 
-Windows 使用 UI Automation 与 Windows 本地 OCR；Mac 使用 Accessibility 与 Apple Vision。两版共用同样的输出规则与附件语义。原附件能否自动取得取决于微信版本提供的菜单；无法自动保存的附件需在微信另存后使用“补充附件”。
+上述 v0.2.0 仍为旧自动提取流程，不含本次手动粘贴修改。新版需重新构建并发布；本地构建 / 安装不等同于公开下载已更新。
 
-## 构建
+## 构建与检查
 
-### macOS
+macOS（默认 Apple Silicon）：
 
 ```bash
 swift test
@@ -63,29 +43,20 @@ swift test
 open "dist/聊析.app"
 ```
 
-### Windows
+Windows 10/11 x64：安装含 Tcl/Tk 的 Python 3.12，双击 `windows/start.cmd` 从源码启动；在 Windows PowerShell 执行 `windows/build.ps1` 生成独立 EXE / ZIP。手动版无需 OCR 语言包或 UIA 依赖，详见 [Windows 说明](windows/README.md)。
 
-在 Windows PowerShell 中运行：
+跨平台导出检查：
 
-```powershell
-cd windows
-./build.ps1
+```bash
+python3 -m unittest discover -s windows/tests -v
+python3 windows/app.py --self-test
 ```
 
-## 功能与边界
+## 安全与维护
 
-- 不读取微信数据库、登录信息、Token 或 Cookie。
-- 不注入或 Hook 微信进程。
-- macOS 使用 Accessibility 与 Apple Vision 本地 OCR；Windows 使用 UI Automation 与 Windows 本地 OCR。
-- macOS 屏幕权限通过 ScreenCaptureKit 注册，用途仅限用户主动打开的微信记录窗口；Windows 从用户选择的记录窗口捕获内容。
-- 自动保存仅操作已打开记录的可见附件菜单，不打开执行文档。微信隐藏菜单、过期或未下载的附件可能需要手动另存并补充。
-- 优先另存原附件；图片复制路径保留微信放入剪贴板的图像像素，重新编码为 PNG，不保证与最初上传文件逐字节一致。
-- 微信消息下方的灰色回复原文会输出为 Markdown `>` 引用块。
-- 每个 Markdown 开头都会向 LLM 说明正文样式与引用样式，避免把被引用原消息理解为当前消息。
-- Markdown 只为已经实际保存的文件生成链接，缺失附件会列明，不用截图冒充照片、视频或文档原文件。
-- 自动滚动会把微信置于前台，并短暂移动鼠标指针。
-- Mac 最多读取 120 屏，Windows 最多 100 屏；触及上限时在 Markdown 文末提示。
+- 仅在用户点击“粘贴”或系统粘贴时获取文字，不监听剪贴板。
+- 只复制用户选择的本地文件，不执行附件，不上传内容。
+- 不读取微信数据库、登录信息、Token 或 Cookie，不注入 / Hook 微信。
+- 历史自动捕获源码保留供追溯，当前主界面不调用窗口 / OCR 流程。
 
-## 文档维护
-
-本文件维护安装、操作与使用边界；Windows 的依赖和构建步骤维护在 `windows/README.md`，架构见 `PROJECT_INTRODUCTION.md`，验证记录按日期追加到 `log.md`。
+本文件维护使用、构建和边界；架构见 `PROJECT_INTRODUCTION.md`，Windows 操作见 `windows/README.md`，验证按日期追加到 `log.md`。历史发布文档不视为当前使用说明。

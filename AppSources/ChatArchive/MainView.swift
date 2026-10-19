@@ -13,18 +13,14 @@ struct MainView: View {
             .ignoresSafeArea()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 30) {
+                VStack(alignment: .leading, spacing: 20) {
                     header
-                    permissionSection
+                    inputSection
                     exportSection
                     actionSection
                 }
-                .padding(44)
+                .padding(30)
             }
-        }
-        .onAppear { model.refreshPermissions() }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            model.refreshPermissions()
         }
     }
 
@@ -33,30 +29,31 @@ struct MainView: View {
             Text("聊析")
                 .font(.system(size: 54, weight: .black, design: .rounded))
                 .tracking(-2)
-            Text("微信合并记录 · Markdown")
+            Text("手动粘贴 · Markdown")
                 .font(.system(size: 19, weight: .medium))
                 .foregroundStyle(.secondary)
         }
     }
 
-    private var permissionSection: some View {
+    private var inputSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            sectionLabel("01  权限")
-            HStack(spacing: 14) {
-                permissionCard(
-                    title: "辅助功能",
-                    granted: model.accessibilityGranted,
-                    waitingText: "点击后打开系统设置",
-                    actionTitle: "打开设置",
-                    action: model.requestAccessibility
-                )
-                permissionCard(
-                    title: "屏幕录制",
-                    granted: model.screenCaptureGranted,
-                    waitingText: "点击后打开系统设置",
-                    actionTitle: "打开设置",
-                    action: model.requestScreenCapture
-                )
+            HStack {
+                sectionLabel("01  聊天内容")
+                Spacer()
+                Button("粘贴", action: model.pasteFromClipboard).buttonStyle(OutlineButtonStyle())
+                Button("补充附件", action: model.chooseAttachments).buttonStyle(OutlineButtonStyle())
+            }
+            .disabled(model.isWorking)
+            ManualTextEditor(text: $model.draftText, selection: $model.draftSelection, editable: !model.isWorking)
+                .frame(height: 260)
+                .background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(.black.opacity(0.10)))
+            if !model.manualAttachments.isEmpty {
+                HStack {
+                    Text("\(model.manualAttachments.count) 个附件").foregroundStyle(.secondary)
+                    Spacer()
+                    Button("清空附件", action: model.clearManualAttachments).disabled(model.isWorking)
+                }
             }
         }
     }
@@ -77,31 +74,20 @@ struct MainView: View {
                 Spacer()
                 Button("选择位置", action: model.chooseOutputDirectory)
                     .buttonStyle(OutlineButtonStyle())
+                    .disabled(model.isWorking)
             }
             .padding(20)
             .background(.white.opacity(0.76), in: RoundedRectangle(cornerRadius: 20))
             .overlay(RoundedRectangle(cornerRadius: 20).stroke(.black.opacity(0.07)))
-            HStack {
-                Button("补充附件", action: model.chooseAttachments)
-                    .buttonStyle(OutlineButtonStyle())
-                    .disabled(model.isWorking)
-                Text("已选择 \(model.sourceFiles.count) 个原文件")
-                    .foregroundStyle(.secondary)
-                if !model.sourceFiles.isEmpty {
-                    Button("清空") { model.sourceFiles = [] }.disabled(model.isWorking)
-                }
-            }
         }
     }
 
     private var actionSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            sectionLabel("03  提取")
-            Text("在微信中打开合并聊天记录，并让窗口保持可见。")
-                .font(.system(size: 20, weight: .bold))
+            sectionLabel("03  保存")
 
             HStack(spacing: 16) {
-                Button(model.isWorking ? "提取中" : "开始提取", action: model.start)
+                Button(model.isWorking ? "保存中" : "导出 Markdown", action: model.start)
                     .buttonStyle(PrimaryButtonStyle())
                     .disabled(model.isWorking)
 

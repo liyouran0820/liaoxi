@@ -1,81 +1,73 @@
-"""聊析 Windows desktop application. Requires Python 3.12 x64 on Windows."""
+"""聊析：手动粘贴聊天内容并整理附件。启动不读取微信、不截图、不做 OCR。"""
 from __future__ import annotations
 
-import asyncio
 import ctypes
 import os
 from pathlib import Path
 import queue
 import sys
 import threading
-import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
 
 from archive_core import Cancelled
+from manual_archive import ManualAttachment, export_manual
 
 
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("聊析")
-        self.root.geometry("820x680")
-        self.root.minsize(720, 600)
-        self.root.configure(background="#f5f8f5")
+        root.title("聊析")
+        root.geometry("860x780")
+        root.minsize(720, 650)
+        root.configure(background="#f5f8f5")
         self.events = queue.Queue()
         self.stop = threading.Event()
-        self.sources = []
-        self.targets = []
+        self.attachments = []
         self.result = None
         self.busy = False
         self.output = ""
-        self.status = tk.StringVar(value="")
-        self.file_label = tk.StringVar(value="已选择 0 个原文件")
+        self.status = tk.StringVar()
+        self.file_label = tk.StringVar(value="0 个附件")
         self.output_label = tk.StringVar(value="尚未选择导出位置")
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("TFrame", background="#f5f8f5")
         style.configure("TLabel", background="#f5f8f5", font=("Microsoft YaHei UI", 11))
-        style.configure("TButton", font=("Microsoft YaHei UI", 11), padding=(15, 10))
+        style.configure("TButton", font=("Microsoft YaHei UI", 11), padding=(15, 9))
         style.configure("Primary.TButton", background="#143b29", foreground="white")
-        style.map("Primary.TButton", background=[("active", "#24513a")])
-        frame = ttk.Frame(root, padding=36)
+        frame = ttk.Frame(root, padding=30)
         frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="聊析", font=("Microsoft YaHei UI", 36, "bold")).pack(anchor="w")
-        ttk.Label(frame, text="微信合并记录 · Markdown", foreground="#69736c").pack(anchor="w", pady=(0, 24))
-        ttk.Label(frame, text="01  微信聊天记录", font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="聊析", font=("Microsoft YaHei UI", 32, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="手动粘贴 · Markdown", foreground="#69736c").pack(anchor="w", pady=(0, 16))
         row = ttk.Frame(frame)
-        row.pack(fill="x", pady=(10, 22))
-        self.target = ttk.Combobox(row, state="readonly")
-        self.target.pack(side="left", fill="x", expand=True, padx=(0, 12))
-        self.refresh_button = ttk.Button(row, text="刷新窗口", command=self.refresh)
-        self.refresh_button.pack(side="left")
-        ttk.Label(frame, text="02  保存位置与附件", font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
-        row = ttk.Frame(frame)
-        row.pack(fill="x", pady=10)
-        self.output_button = ttk.Button(row, text="选择位置", command=self.choose_output)
-        self.output_button.pack(side="left", padx=(0, 15))
-        ttk.Label(row, textvariable=self.output_label, wraplength=480).pack(side="left", fill="x", expand=True)
-        row = ttk.Frame(frame)
-        row.pack(fill="x", pady=(0, 22))
+        row.pack(fill="x", pady=(0, 10))
+        ttk.Label(row, text="01  聊天内容", font=("Microsoft YaHei UI", 11, "bold")).pack(side="left")
         self.add_button = ttk.Button(row, text="补充附件", command=self.add_files)
-        self.add_button.pack(side="left", padx=(0, 15))
-        ttk.Label(row, textvariable=self.file_label).pack(side="left")
-        self.clear_button = ttk.Button(row, text="清空", command=self.clear_files)
-        self.clear_button.pack(side="right")
-        ttk.Label(frame, text="03  提取", font=("Microsoft YaHei UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(frame, text="打开合并聊天记录，保持窗口可见。", font=("Microsoft YaHei UI", 15, "bold")).pack(anchor="w", pady=12)
+        self.add_button.pack(side="right")
+        self.paste_button = ttk.Button(row, text="粘贴", command=self.paste)
+        self.paste_button.pack(side="right", padx=10)
+        self.editor = ScrolledText(frame, wrap="word", undo=True, font=("Microsoft YaHei UI", 12), padx=12, pady=12, height=12)
+        self.editor.pack(fill="both", expand=True)
         row = ttk.Frame(frame)
-        row.pack(fill="x")
-        self.start_button = ttk.Button(row, text="开始提取", style="Primary.TButton", command=self.start)
-        self.start_button.pack(side="left", padx=(0, 12))
+        row.pack(fill="x", pady=8)
+        ttk.Label(row, textvariable=self.file_label).pack(side="left")
+        self.clear_button = ttk.Button(row, text="清空附件", command=self.clear_files)
+        self.clear_button.pack(side="right")
+        row = ttk.Frame(frame)
+        row.pack(fill="x", pady=12)
+        self.output_button = ttk.Button(row, text="选择位置", command=self.choose_output)
+        self.output_button.pack(side="right")
+        ttk.Label(row, textvariable=self.output_label, wraplength=560).pack(side="left")
+        row = ttk.Frame(frame)
+        row.pack(fill="x", pady=8)
+        self.start_button = ttk.Button(row, text="导出 Markdown", style="Primary.TButton", command=self.start)
+        self.start_button.pack(side="left")
         self.stop_button = ttk.Button(row, text="停止", command=self.stop.set, state="disabled")
-        self.stop_button.pack(side="left", padx=(0, 12))
+        self.stop_button.pack(side="left", padx=10)
         self.reveal_button = ttk.Button(row, text="查看结果", command=self.reveal, state="disabled")
         self.reveal_button.pack(side="left")
-        ttk.Label(frame, textvariable=self.status, wraplength=710).pack(anchor="w", pady=20)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
-        self.root.after(100, self.poll)
-        self.refresh()
+        ttk.Label(frame, textvariable=self.status, wraplength=760).pack(anchor="w", pady=(8, 0))
+        root.protocol("WM_DELETE_WINDOW", self.close)
+        root.after(100, self.poll)
 
     def choose_output(self):
         value = filedialog.askdirectory(title="选择导出位置")
@@ -83,68 +75,78 @@ class App:
             self.output = value
             self.output_label.set(value)
 
+    def paste(self):
+        try:
+            text = self.root.clipboard_get()
+        except tk.TclError:
+            self.status.set("剪贴板中没有文字。图片和文件请用“补充附件”。")
+            return
+        if self.editor.tag_ranges(tk.SEL):
+            self.editor.delete(tk.SEL_FIRST, tk.SEL_LAST)
+        self.editor.insert(tk.INSERT, text)
+        self.editor.focus_set()
+
     def add_files(self):
-        values = filedialog.askopenfilenames(title="补充从微信保存的照片、视频和文档")
-        self.sources = list(dict.fromkeys(self.sources + [Path(value) for value in values]))
-        self.file_label.set(f"已选择 {len(self.sources)} 个原文件")
+        insertion = self.editor.index(tk.INSERT)
+        paths = filedialog.askopenfilenames(title="补充照片、视频和文档")
+        entries = []
+        for raw in paths:
+            file = Path(raw)
+            entry = next((a for a in self.attachments if a.source.resolve() == file.resolve()), None)
+            if entry is None:
+                entry = ManualAttachment(max((a.id for a in self.attachments), default=0) + 1, file)
+                self.attachments.append(entry)
+            entries.append(entry)
+        if not entries:
+            return
+        before = self.editor.get("1.0", insertion)
+        after = self.editor.get(insertion, "end-1c")
+        block = "\n\n".join(entry.token for entry in entries)
+        if before and not before.endswith("\n"):
+            block = "\n\n" + block
+        block += "\n\n" if after and not after.startswith("\n") else "\n"
+        self.editor.insert(insertion, block)
+        self.file_label.set(f"{len(self.attachments)} 个附件")
+        self.editor.focus_set()
 
     def clear_files(self):
-        self.sources.clear()
-        self.file_label.set("已选择 0 个原文件")
-
-    def refresh(self):
-        if self.busy:
-            return
-        self.refresh_button.configure(state="disabled")
-        self.status.set("正在查找打开的微信聊天记录窗口…")
-        def worker():
-            backend = None
-            try:
-                from windows_capture import WeChatCapture
-                backend = WeChatCapture(lambda _: None, threading.Event())
-                self.events.put(("targets", backend.windows()))
-            except Exception as error:
-                self.events.put(("error", str(error)))
-            finally:
-                if backend:
-                    backend.close()
-                self.events.put(("refreshed", None))
-        threading.Thread(target=worker, daemon=True).start()
+        text = self.editor.get("1.0", "end-1c")
+        for entry in self.attachments:
+            text = text.replace(entry.token, "")
+        self.editor.delete("1.0", "end")
+        self.editor.insert("1.0", text)
+        self.attachments.clear()
+        self.file_label.set("0 个附件")
 
     def start(self):
         if self.busy:
             return
-        index = self.target.current()
-        if not self.output or not (0 <= index < len(self.targets)):
-            self.status.set("请先选择微信聊天记录窗口和导出位置。")
+        draft = self.editor.get("1.0", "end-1c")
+        if not self.output:
+            self.status.set("请先选择导出位置。")
+            return
+        if not draft.strip() and not self.attachments:
+            self.status.set("请先粘贴聊天文字或添加附件。")
             return
         self.stop.clear()
         self.set_busy(True)
-        handle = self.targets[index][0]
-        sources = list(self.sources)
-        parent = self.output
+        self.status.set("正在保存 Markdown 与附件…")
+        parent, attachments = self.output, list(self.attachments)
+
         def worker():
-            backend = None
             try:
-                from windows_capture import WeChatCapture
-                backend = WeChatCapture(lambda value: self.events.put(("status", value)), self.stop)
-                report = asyncio.run(backend.run(handle, parent, sources))
-                self.events.put(("result", report))
-            except Cancelled as error:
-                self.events.put(("error", str(error)))
+                self.events.put(("result", export_manual(parent, draft, attachments, self.stop)))
             except Exception as error:
-                self.events.put(("error", f"提取未完成：{error}"))
+                self.events.put(("error", str(error)))
             finally:
-                if backend:
-                    backend.close()
                 self.events.put(("done", None))
         threading.Thread(target=worker, daemon=True).start()
 
     def set_busy(self, busy):
         self.busy = busy
-        for widget in [self.start_button, self.refresh_button, self.output_button, self.add_button, self.clear_button]:
+        for widget in [self.start_button, self.paste_button, self.output_button, self.add_button, self.clear_button]:
             widget.configure(state="disabled" if busy else "normal")
-        self.target.configure(state="disabled" if busy else "readonly")
+        self.editor.configure(state="disabled" if busy else "normal")
         self.stop_button.configure(state="normal" if busy else "disabled")
         self.reveal_button.configure(state="disabled" if busy or self.result is None else "normal")
 
@@ -152,24 +154,14 @@ class App:
         try:
             while True:
                 kind, value = self.events.get_nowait()
-                if kind == "targets":
-                    self.targets = value
-                    self.target["values"] = [title for _, title in value]
-                    if value:
-                        self.target.current(0)
-                    self.status.set("" if value else "未找到合并聊天记录。请在微信打开记录卡片后刷新。")
-                elif kind in {"status", "error"}:
+                if kind == "error":
                     self.status.set(value)
                 elif kind == "result":
                     self.result = value.folder
-                    text = f"已保存 {value.line_count} 行文字、{value.image_count} 张照片、{value.video_count} 个视频、{value.file_count} 个文件。"
-                    if value.warnings:
-                        text += " 请查看 Markdown 文末附件提示。"
-                    self.status.set(text)
+                    self.status.set(f"已保存 {value.line_count} 行文字、{value.image_count} 张照片、{value.video_count} 个视频、{value.file_count} 个文件。"
+                                    + (" 请查看文末附件提示。" if value.warnings else ""))
                 elif kind == "done":
                     self.set_busy(False)
-                elif kind == "refreshed":
-                    self.refresh_button.configure(state="normal")
         except queue.Empty:
             pass
         self.root.after(100, self.poll)
@@ -187,29 +179,33 @@ class App:
             self.root.destroy()
 
 
+def self_test():
+    import json
+    import tempfile
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        file = root / "sample.txt"
+        file.write_bytes(b"manual attachment")
+        entry = ManualAttachment(1, file)
+        report = export_manual(root, f"A：手动测试\n\n{entry.token}\n\nB：收到。", [entry])
+        md = report.markdown_path.read_text(encoding="utf-8")
+        assert "A：手动测试" in md and "B：收到。" in md and "(sample.txt)" in md
+        assert (report.folder / file.name).read_bytes() == file.read_bytes()
+    if "--self-test-report" in sys.argv:
+        path = Path(sys.argv[sys.argv.index("--self-test-report") + 1])
+        path.write_text(json.dumps({"status": "passed", "mode": "manual", "ocr": False, "screen_capture": False, "attachments": True}), encoding="utf-8")
+
+
 def main():
-    if sys.platform != "win32":
-        raise SystemExit("这是 Windows 版本，请在 Windows 10/11 上运行。Mac 请打开聊析.app。")
     if "--self-test" in sys.argv:
-        # Exercise native imports inside the packaged EXE, without touching user chats.
-        import json
-        from PIL import Image, ImageDraw, ImageFont
-        from windows_capture import WeChatCapture
-        backend = WeChatCapture(lambda _: None, threading.Event())
-        try:
-            backend.windows()
-            image = Image.new("RGB", (640, 120), "white")
-            ImageDraw.Draw(image).text((20, 20), "Hello world", fill="black",
-                                      font=ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 40))
-            lines = asyncio.run(backend.recognize(image))
-            if not any("hello" in line.text.lower() for line in lines):
-                raise RuntimeError("Packaged OCR did not recognize the test image")
-            if "--self-test-report" in sys.argv:
-                path = Path(sys.argv[sys.argv.index("--self-test-report") + 1])
-                path.write_text(json.dumps({"status": "passed", "ocr": True, "uia": True}), encoding="utf-8")
-        finally:
-            backend.close()
+        self_test()
         return
+    if sys.platform != "win32":
+        raise SystemExit("这是 Windows 版本；Mac 请打开聊析.app。")
+    global tk, ttk, filedialog, ScrolledText
+    import tkinter as tk
+    from tkinter import ttk, filedialog
+    from tkinter.scrolledtext import ScrolledText
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except OSError:

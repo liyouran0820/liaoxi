@@ -12,10 +12,13 @@ final class AppModel: ObservableObject {
         case failed(String)
     }
 
-    @Published var accessibilityGranted = AXIsProcessTrusted()
-    @Published var screenCaptureGranted = CGPreflightScreenCaptureAccess()
+    @Published var accessibilityGranted = false
+    @Published var screenCaptureGranted = false
     @Published var outputDirectory: URL?
     @Published var sourceFiles: [URL] = []
+    @Published var draftText = ""
+    @Published var draftSelection = NSRange(location: 0, length: 0)
+    @Published var manualAttachments: [ManualAttachment] = []
     @Published var runState: RunState = .idle
     private var extractionTask: Task<Void, Never>?
 
@@ -81,7 +84,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func start() {
+    func startAutomaticExtraction() {
         refreshPermissions()
         guard accessibilityGranted else {
             runState = .failed("请先打开辅助功能设置中的“聊析”开关。")
@@ -118,6 +121,7 @@ final class AppModel: ObservableObject {
     }
 
     func chooseAttachments() {
+        let insertion = draftSelection
         let panel = NSOpenPanel()
         panel.title = "补充从微信保存的照片、视频和文档"
         panel.prompt = "添加附件"
@@ -125,7 +129,63 @@ final class AppModel: ObservableObject {
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = true
         if panel.runModal() == .OK {
-            for url in panel.urls where !sourceFiles.contains(url) { sourceFiles.append(url) }
+            insertAttachments(panel.urls, at: insertion)
+        }
+    }
+
+    func pasteFromClipboard() {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else {
+            runState = .failed("剪贴板中没有文字。照片、视频和文件请先保存，再用“补充附件”加入。")
+            return
+        }
+        let edit = ManualDraft.inserting(text, into: draftText, selection: draftSelection)
+        draftText = edit.text; draftSelection = edit.selection
+    }
+
+    func insertAttachments(_ urls: [URL], at selection: NSRange) {
+        var entries: [ManualAttachment] = []
+        for url in urls {
+            if let existing = manualAttachments.first(where: { $0.source.standardizedFileURL == url.standardizedFileURL }) {
+                entries.append(existing)
+            } else {
+                let entry = ManualAttachment(id: (manualAttachments.map(\.id).max() ?? 0) + 1, source: url)
+                manualAttachments.append(entry); entries.append(entry)
+            }
+        }
+        guard !entries.isEmpty else { return }
+        // Adding files must not erase a selected message.
+        let insertion = Range(selection, in: draftText) == nil ? draftText.utf16.count : NSMaxRange(selection)
+        let edit = ManualDraft.inserting(entries.map(\.token).joined(separator: "\n\n"), into: draftText,
+            selection: NSRange(location: insertion, length: 0), block: true)
+        draftText = edit.text; draftSelection = edit.selection
+        sourceFiles = manualAttachments.map(\.source)
+    }
+
+    func clearManualAttachments() {
+        for entry in manualAttachments { draftText = draftText.replacingOccurrences(of: entry.token, with: "") }
+        manualAttachments = []; sourceFiles = []
+        draftSelection = NSRange(location: draftText.utf16.count, length: 0)
+    }
+
+    func start() {
+        guard !isWorking else { return }
+        guard let parent = outputDirectory else { runState = .failed("请先选择导出位置。"); return }
+        let draft = draftText, attachments = manualAttachments
+        guard !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else {
+            runState = .failed(ManualArchiveError.empty.localizedDescription); return
+        }
+        runState = .working("正在保存 Markdown 与附件…")
+        extractionTask = Task {
+            do {
+                let report = try await withThrowingTaskGroup(of: ExtractionReport.self) { group in
+                    group.addTask { try ManualMarkdownExporter().export(draft: draft, attachments: attachments, to: parent) }
+                    guard let result = try await group.next() else { throw CancellationError() }
+                    return result
+                }
+                runState = .finished(report)
+            } catch is CancellationError { runState = .failed("已停止保存；粘贴文字仍在编辑区，已写入的草稿和附件保留。") }
+            catch { runState = .failed(error.localizedDescription) }
+            extractionTask = nil
         }
     }
 

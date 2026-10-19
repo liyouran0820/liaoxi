@@ -1,4 +1,5 @@
 import sys
+import os
 import tempfile
 import threading
 import unittest
@@ -180,7 +181,7 @@ class ArchiveTests(unittest.TestCase):
                 self.assertEqual({f.name for f in folder.iterdir()}, {folder.name + ".md", "direct.png"})
 
 
-@unittest.skipUnless(sys.platform == "win32", "Windows runtime check requires Windows")
+@unittest.skipUnless(sys.platform == "win32" and os.environ.get("CHATARCHIVE_TEST_LEGACY_CAPTURE") == "1", "Legacy capture checks are opt-in")
 class WindowsRuntimeTests(unittest.TestCase):
     def test_local_ocr_and_uia(self):
         import asyncio

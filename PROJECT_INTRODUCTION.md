@@ -2,39 +2,35 @@
 
 ## 产品目标
 
-聊析服务于“手动合并转发、自动结构化整理”的工作流。用户主动在微信内筛选内容，应用读取已打开的合并记录，每次创建与 Markdown 同名的文件夹，里面平铺放置该 `.md` 及实际保存的照片、视频、文档，便于整体移动和交给 LLM。
+聊析将用户手动从微信复制的文字与自行保存的照片、视频和文档，整理为可提供给 LLM 的单个文件夹：Markdown 与附件平铺于同名目录。默认不截图、不使用 OCR、不定位或操作微信。
 
-## 技术路径
+## 当前架构
 
-- `WindowCaptureService`：定位合并记录，通过 ScreenCaptureKit 截取该窗口的可见矩形，前后检查原生窗口身份、位置与遮挡；macOS 15.2+ 使用直接矩形接口，滚动与附件菜单取图沿用原流程。
-- `VisibleCaptureGuard`：只读核对窗口 ID、进程、原生标题、几何和透明度，拒绝遮挡、移位或跨屏；不对昵称截图做强制 OCR 校验，不参与正文 OCR 与去重。
-- `AccessibilityTextService`：读取微信窗口暴露的辅助功能文本。
-- `OCRService`：以 Apple Vision 在本机识别中英文。
-- `ContentProcessor`：跨屏去重、文字源选择、灰色回复引用识别、图片候选裁切和文件名识别。
-- `PageOverlap`：相邻屏后缀 / 前缀顺序对齐，使用正文与时间上下文容忍 OCR 昵称差异；保留非重叠区同文消息，不做全文唯一化。Windows 在 `archive_core.py` 实现同规则。
-- `AttachmentCollector`：逐屏定位候选附件，通过微信可见的另存或复制菜单收集附件。
-- `AttachmentPosition`：仅保存附件及其相邻文字的位置资料，在最终 Markdown 输出层匹配插入边界；不向 OCR、正文选择或跨屏去重加入占位符，也不改变正文数组。
-- `ArchiveFiles`：跨平台文件名兼容、同名编号、SHA-256 校验和相对链接。
-- `ArchiveWorkspace`：先创建最终同名目录与状态 Markdown，附件直接保存其中；中断时保留已取得文件。
-- `MediaRegionDetector`：依据像素连接区检测媒体，并在聊天 OCR 前排除；不转写照片 / 视频内部文字。
-- `MarkdownExporter`：校验附件并原子写入同名 Markdown，按类型与实际文件名建立相对链接；提示与统计内嵌文末。
-- `windows/archive_core.py`：Windows 的导出格式、内容去重、引用标注与附件复制，纯标准库，支持在 Mac 运行导出测试。
-- `windows/windows_capture.py`：Windows UI Automation、WinRT OCR、窗口捕获、滚动与附件另存。
-- `windows/app.py`：Windows Tk 桌面界面，提取与停止在后台线程执行。
+- `MainView` / `ManualTextEditor`：Mac 纯文本编辑器与 UTF-16 光标绑定，关闭智能标点替换。
+- `AppModel.start()`：无权限门槛的手动导出；文件操作在子任务执行。
+- `ManualDraft`：Unicode 安全文字插入；添加附件不覆盖选中文字。
+- `ManualAttachment`：文件与可移动标记，输出时替换为实际链接。
+- `ManualMarkdownExporter`：原文保留、附件去重 / 校验、同名处理、相对链接及样式说明；先写文字快照，再复制附件。
+- `ArchiveFiles` / `ArchiveWorkspace`：共用命名、摘要和同名目录规则。
+- `windows/app.py`：Tk 手动编辑界面，后台线程导出，不导入历史捕获模块。
+- `windows/manual_archive.py`：标准库导出实现，可跨平台测试。
 
-## 验证边界
+历史 `ExtractionPipeline`、窗口 / OCR / 自动附件采集及测试保留供追溯，不属于当前默认链路。Mac 旧入口命名为 `startAutomaticExtraction()`，主界面不调用。Windows 历史依赖独立保留在 `requirements-legacy.txt`。
 
-Mac 可在本机构建、签名、安装并验证。Windows 的导出核心可跨平台测试，原生 UIA / WinRT 与微信实机流程必须在 Windows 验证。`windows/build.ps1` 会先执行含 Windows OCR 的测试，再打包 EXE；仓库中的 Windows CI 仅在关联远端并运行后才产生已构建产物。
+## 验证与分发边界
 
-0.2.0 已由 GitHub Actions 完成 macOS / Windows 双平台构建，Windows 原生 OCR / UIA 与打包后的 EXE 自检均通过。正式分发包位于 GitHub Releases。真实微信附件菜单的端到端兼容性与微信版本相关，CI 自检不替代该验收。
+Mac 可以本机构建、签名、安装和验证；Windows 导出核心及自检可跨平台执行，Tk 界面和实际 EXE 需 Windows 实机 / CI 验证。`windows/build.ps1` 运行便携测试、打包，再启动实际 EXE 做手动文字 / 附件导出自检。旧原生测试仅在显式设置 `CHATARCHIVE_TEST_LEGACY_CAPTURE=1` 并安装历史依赖后执行。
 
-## 文档职责
-
-- `PROJECT_INTRODUCTION.md`：维护稳定的产品范围、架构和关键技术决策。
-- `README.md`：维护面向使用者与开发者的安装、使用和构建说明。
-- `log.md`：按日期追加已完成事项、验证结果和已知问题，不在这里重复产品介绍。
-- `windows/README.md`：Windows 安装、启动、EXE 构建与系统限制，不重复 Mac 授权步骤。
+公开 v0.2.0 仍是旧自动提取版；当前源代码修改不代表旧下载包已更新。实际验证和发布证据写入日志。
 
 ## 安全边界
 
-应用不接触微信数据库和私有协议，不读取凭据，不修改微信文件，不上传提取内容。授权范围为用户主动提取的合并记录；可见区域取图已获用户明确同意，读取前后检查遮挡，不把未通过校验的图像送入正文处理或写入导出附件。
+本地处理，不读微信数据库或凭据，不上传内容。仅使用主动粘贴的文字和选定文件；不监听剪贴板。纯文本不能恢复灰色引用颜色，引用由用户以 `> ` 标记，附件位置由用户决定，不猜测缺失信息。
+
+## 文档职责
+
+- `PROJECT_INTRODUCTION.md`：稳定目标、架构与技术边界。
+- `README.md`：使用、构建和版本状态。
+- `windows/README.md`：Windows 启动、打包及平台限制。
+- `log.md`：按日期追加实际结果，保留历史。
+- `docs/releases/`：历史版本发布说明。
