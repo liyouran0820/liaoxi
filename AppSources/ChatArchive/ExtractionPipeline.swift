@@ -64,7 +64,7 @@ struct ExtractionPipeline {
             accessibilityPages.append(processor.visibleAccessibilityText(accessibilityText, matching: lines))
 
             progress("正在保存第 \(index + 1) 屏的附件…")
-            try await collector.collect(target: target, lines: lines, regions: mediaRegions)
+            try await collector.collect(target: target, lines: lines, regions: mediaRegions, pageIndex: index)
 
             try await captureService.activateAndScroll(target: target, delta: -Int32(target.window.frame.height * 0.55))
         }
@@ -93,6 +93,7 @@ struct ExtractionPipeline {
             pages: pageLines.count,
             usedAccessibility: chosen.usedAccessibility,
             sourceFiles: sourceFiles + collector.files,
+            attachmentPositions: collector.positions,
             attachmentWarnings: warnings,
             existingDirectory: workspace.directory,
             to: outputDirectory

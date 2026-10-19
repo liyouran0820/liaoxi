@@ -7,7 +7,7 @@ import re
 import sys
 import uuid
 
-from archive_core import Line, archive_workspace, check_cancel, digest, export_archive, file_names, is_merged_record_title, key, mark_quotes, merge_pages, unique_path
+from archive_core import AttachmentPosition, Line, archive_workspace, check_cancel, digest, export_archive, file_names, is_merged_record_title, key, mark_quotes, merge_pages, unique_path
 
 
 class WeChatCapture:
@@ -343,6 +343,7 @@ class WeChatCapture:
         warnings = []
         any_ax = False
         downloaded_hashes = {}
+        positions = []
         with archive_workspace(Path(parent)) as temporary:
             temporary = Path(temporary)
             top_signature = None
@@ -388,9 +389,13 @@ class WeChatCapture:
                             first = downloaded_hashes.get(sha)
                             if first is not None and first != file and digest(first) == sha:
                                 file.unlink()  # Fresh collector-created duplicate; verified first copy remains.
+                                file = first
                             else:
                                 downloaded_hashes[sha] = file
                                 files.append(file)
+                            before = tuple(line.text for line in lines if line.y + line.height / 2 < y)[-6:]
+                            after = tuple(line.text for line in lines if line.y + line.height / 2 > y)[:6]
+                            positions.append(AttachmentPosition(file, before, after, index, y))
                     except Exception as error:
                         rect = window.rectangle()
                         self.mouse.click(coords=(rect.left + rect.width() // 2, rect.top + 55))
@@ -406,7 +411,7 @@ class WeChatCapture:
                 warnings.append("微信未提供可自动保存的原附件。请将附件在微信另存后，通过“补充附件”重新导出。")
             return export_archive(Path(parent), lines, files, warnings=warnings, pages=len(pages),
                                   text_source="Windows UI Automation + 系统 OCR" if any_ax else "Windows 本地 OCR", stop=self.stop,
-                                  existing_directory=temporary)
+                                  existing_directory=temporary, attachment_positions=positions)
 
 
 def win32clipboard_sequence():

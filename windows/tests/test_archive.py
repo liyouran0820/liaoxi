@@ -7,10 +7,49 @@ import re
 from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from archive_core import Cancelled, Line, archive_workspace, digest, export_archive, is_merged_record_title, mark_quotes, merge_pages, safe_name
+from archive_core import AttachmentPosition, Cancelled, Line, archive_workspace, digest, export_archive, is_merged_record_title, mark_quotes, merge_pages, resolve_attachment_positions, safe_name
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_position_metadata_does_not_replace_any_message(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            photo = root / 'photo.jpg'
+            photo.write_bytes(b'photo')
+            texts = ['Alice', '时间A', '照片前的消息', 'Bob', '时间B', '照片后的消息', '笑死我了', '再次回复', '笑死我了', '张三：引用内容']
+            lines = [Line(t, quoted=t.startswith('张三：')) for t in texts]
+            original = list(lines)
+            position = AttachmentPosition(photo, tuple(texts[:3]), tuple(texts[3:9]))
+            report = export_archive(root, lines, [photo], attachment_positions=[position])
+            md = report.markdown_path.read_text()
+            body = md.split('## 对话内容\n\n', 1)[1].split('## 附件', 1)[0]
+            extracted = [t.strip().removeprefix('> ') for t in body.splitlines() if t.strip() and not t.startswith('[照片：')]
+            self.assertEqual(extracted, texts)
+            self.assertEqual(lines, original)
+            self.assertEqual(report.line_count, len(lines))
+            self.assertIn('照片前的消息  \n\n[照片：photo.jpg](photo.jpg)  \n\nBob', body)
+
+    def test_ambiguous_position_is_not_guessed(self):
+        lines = [Line(t) for t in ['Alice', '时间A', 'Alice', '时间A']]
+        position = AttachmentPosition(Path('/tmp/image.jpg'), ('Alice', '时间A'))
+        self.assertEqual(resolve_attachment_positions([position], lines), {})
+
+    def test_same_file_at_distinct_positions_and_alias_dedup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            photo, alias = root / 'photo.jpg', root / 'alias.jpg'
+            photo.write_bytes(b'same photo')
+            alias.write_bytes(b'same photo')
+            texts = ['Alice', '时间A', '消息A', 'Bob', '时间B', '消息B']
+            positions = [AttachmentPosition(file, tuple(texts[:3]), tuple(texts[3:])) for file in [photo, alias]]
+            positions.append(AttachmentPosition(photo, tuple(texts)))
+            report = export_archive(root, [Line(t) for t in texts], [photo, alias], attachment_positions=positions)
+            md = report.markdown_path.read_text()
+            body = md.split('## 对话内容\n\n', 1)[1].split('## 附件', 1)[0]
+            self.assertEqual(body.count('[照片：photo.jpg]'), 2)
+            self.assertNotIn('alias.jpg', md)
+            self.assertEqual(report.image_count, 1)
+
     def test_headers_and_ocr_nickname_do_not_duplicate_messages(self):
         first = ["●", "Alice和Bob的聊天记录", "••●", "Alice01", "2026年10月18日 22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件"]
         second = ["Alice和Bob的聊天记录", "•••", "Alice0l", "2026年10月18日22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件", "Bob", "2026年10月18日 22:46", "这是下一条消息"]

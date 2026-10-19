@@ -12,6 +12,7 @@
 - `ContentProcessor`：跨屏去重、文字源选择、灰色回复引用识别、图片候选裁切和文件名识别。
 - `PageOverlap`：相邻屏后缀 / 前缀顺序对齐，使用正文与时间上下文容忍 OCR 昵称差异；保留非重叠区同文消息，不做全文唯一化。Windows 在 `archive_core.py` 实现同规则。
 - `AttachmentCollector`：逐屏定位候选附件，通过微信可见的另存或复制菜单收集附件。
+- `AttachmentPosition`：仅保存附件及其相邻文字的位置资料，在最终 Markdown 输出层匹配插入边界；不向 OCR、正文选择或跨屏去重加入占位符，也不改变正文数组。
 - `ArchiveFiles`：跨平台文件名兼容、同名编号、SHA-256 校验和相对链接。
 - `ArchiveWorkspace`：先创建最终同名目录与状态 Markdown，附件直接保存其中；中断时保留已取得文件。
 - `MediaRegionDetector`：依据像素连接区检测媒体，并在聊天 OCR 前排除；不转写照片 / 视频内部文字。

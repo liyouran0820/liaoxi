@@ -28,6 +28,40 @@ class Line:
     quoted: bool = False
 
 
+@dataclass(frozen=True)
+class AttachmentPosition:
+    file: Path
+    before: tuple[str, ...] = ()
+    after: tuple[str, ...] = ()
+    page: int = 0
+    y: float = 0
+
+
+def resolve_attachment_positions(positions: list[AttachmentPosition], lines: list[Line]) -> dict[int, list[Path]]:
+    """Read-only output metadata: never replace message lines or change page merging."""
+    keys = [key(line.text) for line in lines]
+    result = {}
+    for position in sorted(positions, key=lambda p: (p.page, p.y)):
+        before, after = [key(t) for t in position.before[-6:]], [key(t) for t in position.after[:6]]
+        best_score, best = 0, []
+        for boundary in range(len(lines) + 1):
+            score = 0
+            for left, right in zip(reversed(before), reversed(keys[:boundary])):
+                if left != right: break
+                score += 1
+            for left, right in zip(after, keys[boundary:]):
+                if left != right: break
+                score += 1
+            if score > best_score:
+                best_score, best = score, [boundary]
+            elif score == best_score:
+                best.append(boundary)
+        if best_score >= 2 and len(best) == 1:
+            file = Path(position.file).resolve()
+            if file not in result.setdefault(best[0], []): result[best[0]].append(file)
+    return result
+
+
 class Cancelled(Exception):
     pass
 
@@ -254,7 +288,7 @@ def archive_workspace(parent: Path):
 
 def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warnings: list[str] | None = None,
                    pages: int = 0, text_source: str = "Windows UI Automation / 系统 OCR", stop=None,
-                   existing_directory: Path | None = None) -> Report:
+                   existing_directory: Path | None = None, attachment_positions: list[AttachmentPosition] | None = None) -> Report:
     parent = Path(parent)
     if not parent.is_dir():
         raise ValueError("请选择存在的导出目录。")
@@ -268,6 +302,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
         saved: list[tuple[str, str]] = []
         hashes = set()
         canonical_files = {}
+        source_names = {}
         processed_paths = set()
         saved_names = set()
         ordered_sources = sorted(enumerate(sources), key=lambda item: (Path(item[1]).parent.resolve() != stage.resolve(), item[0]))
@@ -285,6 +320,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
                 sha = digest(source)
                 inside = source.parent.resolve() == stage.resolve()
                 if sha in hashes:
+                    source_names[source.resolve()] = canonical_files[sha].name
                     saved_names.add(source.name.casefold())
                     kept = canonical_files.get(sha)
                     if inside and kept is not None and kept.resolve() != source.resolve() and digest(kept) == sha:
@@ -297,6 +333,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
                     saved.append((source.name, kind))
                     hashes.add(sha)
                     canonical_files[sha] = source
+                    source_names[source.resolve()] = source.name
                     saved_names.add(source.name.casefold())
                     continue
                 destination = unique_path(stage, source.name)
@@ -307,6 +344,7 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
                 saved.append((destination.name, kind))
                 hashes.add(sha)
                 canonical_files[sha] = destination
+                source_names[source.resolve()] = destination.name
                 saved_names.add(source.name.casefold())
             except (OSError, ValueError) as error:
                 if destination is not None and destination.exists() and destination.name != "conversation.md":
@@ -321,10 +359,26 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
               "## 内容样式说明（供 LLM 阅读）", "",
               "- **正文样式**：不带引用前缀的普通文本，表示当前消息正文。",
               "- **引用样式**：以 `> ` 开头的 Markdown 引用块，表示微信正文下方灰色的被引用原消息；它是上下文，不是当前发送者的新正文。",
-              "- **附件样式**：照片、视频和文档单独保存，只按类型、实际文件名和相对链接引用。照片和视频内部的文字不转写进正文，LLM 可按文件名读取对应附件。",
+              "- **附件样式**：对话中的附件链接表示该处发送的照片、视频或文档；按实际文件名读取同目录原文件，照片内部文字不转写进正文。文末列表仅为索引，不是新的消息。无法确定位置的补充附件只列在索引，不猜测发送者或时间。",
               "- **缺失附件**：见文末“未保存的附件”；未下载成功、过期或未选择的文件不视为已保存。", "", "## 对话内容", ""]
         was_quote = False
-        for line in lines:
+        insertions = resolve_attachment_positions(attachment_positions or [], lines)
+        located_names = set()
+        for index in range(len(lines) + 1):
+            boundary_names = set()
+            for source in insertions.get(index, []):
+                name = source_names.get(source)
+                if name is not None:
+                    if name in boundary_names: continue
+                    kind = next(kind for saved_name, kind in saved if saved_name == name)
+                    md.extend(["", f"[{kind}：{escaped(name)}]({quote(name, safe='-._~')})  ", ""])
+                    located_names.add(name)
+                    boundary_names.add(name)
+                else:
+                    md.extend(["", f"[附件未保存：{escaped(source.name)}]  ", ""])
+                was_quote = False
+            if index == len(lines): continue
+            line = lines[index]
             if line.quoted != was_quote:
                 md.append("")
             md.append(("> " if line.quoted else "") + escaped(line.text) + "  ")
@@ -333,7 +387,8 @@ def export_archive(parent: Path, lines: list[Line], sources: list[Path], *, warn
         if not saved:
             md.extend(["本次未取得附件原文件。", ""])
         for name, kind in saved:
-            md.extend([f"[{kind}：{escaped(name)}]({quote(name, safe='-._~')})", ""])
+            suffix = "" if name in located_names else " — 聊天位置未确定"
+            md.extend([f"[{kind}：{escaped(name)}]({quote(name, safe='-._~')}){suffix}", ""])
         if warnings:
             md.extend(["## 未保存的附件 / 提取提示", ""] + [f"- {escaped(w)}" for w in warnings] + [""])
         counts = [sum(kind == k for _, kind in saved) for k in ("照片", "视频", "文档 / 文件")]
