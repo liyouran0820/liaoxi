@@ -21,9 +21,11 @@ struct ExtractionPipeline {
         let workspace = try ArchiveWorkspace(parent: outputDirectory)
         let collector = AttachmentCollector(directory: workspace.directory)
         var completed = false
+        var failureReason = "提取未完成或已停止，已保存的附件保留在本目录。"
         defer {
-            if !completed { workspace.writeIncomplete("提取未完成或已停止，已保存的附件保留在本目录。") }
+            if !completed { workspace.writeIncomplete(failureReason) }
         }
+        do {
 
         progress("正在回到记录顶部…")
         var topDigest: String?
@@ -58,6 +60,7 @@ struct ExtractionPipeline {
             CaptureDiagnostics.record("page=\(index) regions=\(mediaRegions.count) dimensions=\(image.width)x\(image.height)")
             let textImage = detector.masking(image, regions: mediaRegions)
             let lines = try await ocrService.recognize(textImage)
+            CaptureDiagnostics.record("page=\(index) ocr-lines=\(lines.count)")
             pageLines.append(lines)
             let accessibilityText = accessibilityService.visibleText(
                 processID: target.application.processID,
@@ -78,6 +81,7 @@ struct ExtractionPipeline {
         let chosen = processor.chooseText(accessibility: accessibilityLines, ocr: ocrLines)
         let timeline = processor.mergePages(timelinePages)
         let positionedLines = chosen.usedAccessibility ? AttachmentTimeline.projecting(timeline, onto: chosen.lines) : timeline
+        CaptureDiagnostics.record("merge ocr-lines=\(ocrLines.count) ax-lines=\(accessibilityLines.count) timeline-lines=\(timeline.count)")
         guard !chosen.lines.isEmpty else { throw ExtractionError.noContent }
         let quoteKeys = processor.quoteKeys(in: pageLines)
 
@@ -106,6 +110,11 @@ struct ExtractionPipeline {
         )
         completed = true
         return report
+        } catch {
+            failureReason = error is CancellationError ? "已停止提取；已保存附件保留，聊天记录未完成。"
+                : "提取失败：\(error.localizedDescription) 已保存附件保留，聊天记录未完成。"
+            throw error
+        }
     }
 
     private func frameDigest(_ image: CGImage) -> String {

@@ -49,6 +49,7 @@ enum ExtractionError: LocalizedError {
     case noSuitableWindow
     case permissionMissing
     case captureFailed
+    case blankCapture
     case noContent
 
     var errorDescription: String? {
@@ -61,6 +62,8 @@ enum ExtractionError: LocalizedError {
             return "权限尚未生效。请在系统设置中允许后重新打开聊析。"
         case .captureFailed:
             return "微信窗口捕获失败。请确认窗口未最小化且屏幕录制权限已经生效。"
+        case .blankCapture:
+            return "微信窗口连续返回空白画面，未能读取聊天内容。已自动重试；请确认合并记录已显示、未最小化或切到其他桌面，再重试。"
         case .noContent:
             return "没有识别到聊天内容。请把合并聊天记录滚动到内容区域后重试。"
         }
