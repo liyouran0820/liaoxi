@@ -21,10 +21,11 @@ struct ExtractionPipeline {
         let workspace = try ArchiveWorkspace(parent: outputDirectory)
         let collector = AttachmentCollector(directory: workspace.directory)
         var completed = false
+        var incompleteReason = "提取未完成或已停止，已保存的附件保留在本目录。"
         defer {
-            if !completed { workspace.writeIncomplete("提取未完成或已停止，已保存的附件保留在本目录。") }
+            if !completed { workspace.writeIncomplete(incompleteReason) }
         }
-
+        do {
         progress("正在回到记录顶部…")
         var topDigest: String?
         for _ in 0..<60 {
@@ -100,6 +101,15 @@ struct ExtractionPipeline {
         )
         completed = true
         return report
+        } catch {
+            incompleteReason = Self.failureDescription(for: error)
+            throw error
+        }
+    }
+
+    static func failureDescription(for error: Error) -> String {
+        error is CancellationError ? "已停止提取；聊天记录未完成，已保存附件保留在本目录。"
+            : "提取失败：\(error.localizedDescription) 已保存附件保留在本目录。"
     }
 
     private func frameDigest(_ image: CGImage) -> String {

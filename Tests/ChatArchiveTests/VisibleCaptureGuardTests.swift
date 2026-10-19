@@ -6,6 +6,14 @@ final class VisibleCaptureGuardTests: XCTestCase {
     private let display = CGRect(x: 0, y: 0, width: 1470, height: 956)
     private let target = VisibleWindowInfo(id: 10, owner: 100, frame: CGRect(x: 455, y: 101, width: 560, height: 720))
 
+    func testFailureKeepsItsSpecificReasonAndCancellationIsDistinct() {
+        XCTAssertTrue(ExtractionPipeline.failureDescription(for: VisibleCaptureError.covered).contains("遮挡"))
+        XCTAssertTrue(ExtractionPipeline.failureDescription(for: ExtractionError.noContent).contains("没有识别到聊天内容"))
+        let cancellation = ExtractionPipeline.failureDescription(for: CancellationError())
+        XCTAssertTrue(cancellation.contains("已停止提取"))
+        XCTAssertFalse(cancellation.contains("提取失败"))
+    }
+
     func testBlankPixelsDoNotPassAsReadableContent() throws {
         let context = try XCTUnwrap(CGContext(data: nil, width: 256, height: 320, bitsPerComponent: 8,
             bytesPerRow: 256 * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
@@ -19,12 +27,13 @@ final class VisibleCaptureGuardTests: XCTestCase {
         XCTAssertFalse(VisibleCaptureGuard.hasPixelVariation(try XCTUnwrap(context.makeImage())))
     }
 
-    func testHeaderMustIdentifyTheRecordRatherThanBackgroundContent() {
-        XCTAssertTrue(VisibleCaptureGuard.headerMatches(expected: "Alice01和Bob的聊天记录", recognized: ["Alice0l和 Bob 的聊天记录"]))
-        XCTAssertTrue(VisibleCaptureGuard.headerMatches(expected: "Alice和Bob的聊天记录", recognized: ["Alice和Bob", "的聊天记录"]))
-        XCTAssertFalse(VisibleCaptureGuard.headerMatches(expected: "Alice和Bob的聊天记录", recognized: ["聊析", "微信合并记录", "开始提取"]))
-        XCTAssertFalse(VisibleCaptureGuard.headerMatches(expected: "Alice和Bob的聊天记录", recognized: ["Carol和Dave的聊天记录"]))
-        XCTAssertFalse(VisibleCaptureGuard.headerMatches(expected: "", recognized: ["聊天记录"]))
+    func testRecordIdentityUsesNativeMetadataNotOCRNickname() {
+        XCTAssertTrue(VisibleCaptureGuard.sameRecord(expectedTitle: "Alice01和Bob的聊天记录", currentTitle: "Alice01和Bob的聊天记录"))
+        XCTAssertTrue(VisibleCaptureGuard.sameRecord(expectedTitle: " 聊天记录 ", currentTitle: "聊天记录"))
+        XCTAssertFalse(VisibleCaptureGuard.sameRecord(expectedTitle: "Alice01和Bob的聊天记录", currentTitle: "Alice0l和Bob的聊天记录"))
+        XCTAssertFalse(VisibleCaptureGuard.sameRecord(expectedTitle: "Alice和Bob的聊天记录", currentTitle: "Carol和Dave的聊天记录"))
+        XCTAssertFalse(VisibleCaptureGuard.sameRecord(expectedTitle: nil, currentTitle: "聊天记录"))
+        XCTAssertFalse(VisibleCaptureGuard.sameRecord(expectedTitle: "微信", currentTitle: "微信"))
     }
 
     func testRecordInFrontIsAllowedAndBackgroundWindowIgnored() {

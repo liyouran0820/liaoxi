@@ -18,33 +18,17 @@ enum VisibleCaptureError: LocalizedError {
         case .covered: return "记录区域被其他窗口或菜单遮挡，已停止截图，避免读取遮挡内容。请将合并记录完整置前后重试。"
         case .notForeground: return "微信记录未处于前台，已停止截图。请返回合并记录后重试。"
         case .blank: return "屏幕上的记录区域仍为空白，未读取到聊天内容。请先确认微信记录已经显示。"
-        case .wrongContent: return "截图未显示这条合并记录的标题，已停止，避免误读其他画面。请将该记录完整置前后重试。"
+        case .wrongContent: return "目标窗口已不再是最初选定的合并记录，已停止读取。请重新选择原记录后重试。"
         }
     }
 }
 
 enum VisibleCaptureGuard {
-    static func headerMatches(expected: String, recognized: [String]) -> Bool {
-        func key(_ text: String) -> String { text.lowercased().filter { $0.isLetter || $0.isNumber } }
-        let needle = key(expected)
-        guard !needle.isEmpty else { return false }
-        let candidates = recognized.map(key) + [key(recognized.joined())]
-        if candidates.contains(where: { $0.contains(needle) }) { return true }
-        guard needle.count >= 8 else { return false }
-        let a = Array(needle), limit = min(2, needle.count / 8)
-        for candidate in candidates where abs(candidate.count - needle.count) <= limit {
-            let b = Array(candidate)
-            var row = Array(0...b.count)
-            for (i, character) in a.enumerated() {
-                var next = [i + 1] + Array(repeating: 0, count: b.count)
-                if !b.isEmpty { for j in 1...b.count {
-                    next[j] = min(row[j] + 1, next[j-1] + 1, row[j-1] + (character == b[j-1] ? 0 : 1))
-                } }
-                row = next
-            }
-            if row[b.count] <= limit { return true }
-        }
-        return false
+    static func sameRecord(expectedTitle: String?, currentTitle: String?) -> Bool {
+        guard let expected = expectedTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let current = currentTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              ChatWindowSelector.isMergedRecordTitle(expected) else { return false }
+        return expected == current
     }
 
     // CGWindowListCopyWindowInfo returns front-to-back order. Do not log titles or other app contents.

@@ -6,8 +6,8 @@
 
 ## 技术路径
 
-- `WindowCaptureService`：定位合并记录，通过 ScreenCaptureKit 截取屏幕上该窗口的可见矩形，前后检查位置及遮挡，验证标题后返回图像；滚动与附件菜单取图沿用原流程。
-- `VisibleCaptureGuard`：只读核对前后台窗口几何及透明度，拒绝遮挡、移位、跨屏或不匹配画面；验证标题只读取顶部标题带，不参与正文 OCR 与去重。
+- `WindowCaptureService`：定位合并记录，通过 ScreenCaptureKit 截取该窗口的可见矩形，前后检查原生窗口身份、位置与遮挡；macOS 15.2+ 使用直接矩形接口，滚动与附件菜单取图沿用原流程。
+- `VisibleCaptureGuard`：只读核对窗口 ID、进程、原生标题、几何和透明度，拒绝遮挡、移位或跨屏；不对昵称截图做强制 OCR 校验，不参与正文 OCR 与去重。
 - `AccessibilityTextService`：读取微信窗口暴露的辅助功能文本。
 - `OCRService`：以 Apple Vision 在本机识别中英文。
 - `ContentProcessor`：跨屏去重、文字源选择、灰色回复引用识别、图片候选裁切和文件名识别。
