@@ -1,41 +1,51 @@
 # 聊析
 
-面向 LLM 的微信聊天记录整理工具，支持 macOS 与 Windows。当前默认流程为**手动复制粘贴文字，再整理本地附件**，不使用 OCR，不读取微信窗口，不需要辅助功能或屏幕录制权限。
+> 当前基线：按用户要求于 2026-10-20 回滚至 GitHub 发布的 **v0.2.0**（`31a0f77`）。程序源码与该标签一致，未混入后续捕获修复、附件内联或手动粘贴功能。公开下载包保持不变。原发布包与近期开发签名不同，若系统显示权限未允许，需重新授权后再验证提取。
+
+聊析｜面向 LLM 的微信聊天记录整理工具，支持 macOS 与 Windows。将合并聊天记录导出为 Markdown，并将照片、视频和文档统一保存在同一文件夹中。
+
+## 一键下载
+
+- [macOS 通用版（DMG，Apple Silicon / Intel）](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-macOS-universal.dmg)
+- [Windows x64 独立版（EXE，无需 Python）](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-Windows-x64.exe)
+- [Windows ZIP 备用下载](https://github.com/liyouran0820/liaoxi/releases/latest/download/ChatArchive-Windows-x64.zip)
+- [全部版本与校验文件](https://github.com/liyouran0820/liaoxi/releases)
+
+macOS 打开 DMG，将“聊析”拖到 Applications。Windows 下载 EXE 后直接运行。系统 OCR 需已安装中文或英语语言功能。
 
 ## 使用
 
-1. 在微信复制需要的文字，在聊析“聊天内容”中粘贴（Mac ⌘V / Windows Ctrl+V，或点击“粘贴”）。
-2. 自行从微信保存照片、视频和文档。在编辑区把光标放到对应的对话之间，点击“补充附件”多选加入。
-3. 编辑区会出现 `[[照片 1：photo.jpg]]` 等标记。可整体剪切 / 粘贴标记到所需位置，不要改标记内部字符。导出时替换为实际文件名和相对链接。
-4. 选择导出位置，点击“导出 Markdown”。每次新建同名文件夹，不覆盖旧记录。
+1. 在微信中多选消息，合并转发给文件传输助手。
+2. 在 Mac 微信里打开这条合并聊天记录，并保持窗口可见。
+3. 打开聊析，授予“辅助功能”和“屏幕录制”权限。
+4. 选择导出位置。需要保留的本地照片、视频和文档可以通过“补充附件”多选加入。
+5. 点击“开始提取”。程序逐屏读取，并尝试通过微信可见的“另存为”或“复制”菜单保存附件。
+
+提取过程中可以随时点击“停止”；未完成的结果不会写入导出目录。
+
+两个权限的“打开设置”会分别进入“隐私与安全性”中的对应页面。在列表中打开“聊析”开关后返回应用，状态会自动刷新。屏幕录制通常需要重新打开应用，请按系统提示操作。
+
+建议使用安装在 `/Applications/聊析.app` 的固定版本。移动应用位置或更换签名会让 macOS 重新请求隐私权限。
+
+输出目录包含：
 
 ```text
 微信聊天记录-时间/
-├── 微信聊天记录-时间.md
-├── photo.jpg
-├── video.mp4
+├── conversation.md
+├── 照片.png
+├── 视频.mp4
 └── 教程.pdf
 ```
 
-正文按手动顺序输出，例如“A 的消息 → 照片链接 → B 的消息”。照片、视频不识别文字；附件与 Markdown 平铺于同一文件夹，可整体提供给支持相应格式的 LLM。
+每次只创建一个总文件夹。文件与 Markdown 平铺放置，不再额外生成 JSON 报告或附件子目录。Markdown 用相对路径引用实际保存的附件；文件同名时自动编号，内容完全相同时只保存一份。复制的原文件进行 SHA-256 校验。缺失附件及提取提示写入 Markdown 文末。
 
-粘贴保留原文字、换行、Markdown 和重复消息，不猜测发言者、不自动去重。纯文本会丢失微信颜色：引用请自行在行首加 `> `。文档开头会向 LLM 说明正文、引用和附件样式。
+## Windows
 
-附件按 SHA-256 内容去重，同一内容只保存一份，不同消息位置仍可重复引用。同名不同内容自动编号，复制后校验；源文件不删除。失败项标为“附件未保存”，不生成假链接。删除标记不会移除附件，文末仍标注“未插入正文”；“清空附件”清除本次附件和标记，不删除原文件。
+Windows 10/11 x64，发布版独立 EXE 自带运行环境，无需安装 Python。源码启动包仍可通过 Python 3.12 x64 运行 `start.cmd`。详见 [Windows 使用与打包说明](windows/README.md)。
 
-编辑草稿仅在当前窗口内存中，关闭前请导出。开始导出后先保存文字快照；停止 / 失败时尽可能保留已写入的文字及附件。大文件复制时，停止可能要等当前文件操作完成。
+Windows 使用 UI Automation 与 Windows 本地 OCR；Mac 使用 Accessibility 与 Apple Vision。两版共用同样的输出规则与附件语义。原附件能否自动取得取决于微信版本提供的菜单；无法自动保存的附件需在微信另存后使用“补充附件”。
 
-## 下载与版本边界
-
-- [已发布版本](https://github.com/liyouran0820/liaoxi/releases)
-- [macOS 历史 v0.2.0 DMG](https://github.com/liyouran0820/liaoxi/releases/download/v0.2.0/ChatArchive-macOS-universal.dmg)
-- [Windows 历史 v0.2.0 EXE](https://github.com/liyouran0820/liaoxi/releases/download/v0.2.0/ChatArchive-Windows-x64.exe)
-
-上述 v0.2.0 仍为旧自动提取流程，不含本次手动粘贴修改。新版需重新构建并发布；本地构建 / 安装不等同于公开下载已更新。
-
-## 构建与检查
-
-macOS（默认 Apple Silicon）：
+## 构建
 
 ```bash
 swift test
@@ -43,20 +53,20 @@ swift test
 open "dist/聊析.app"
 ```
 
-Windows 10/11 x64：安装含 Tcl/Tk 的 Python 3.12，双击 `windows/start.cmd` 从源码启动；在 Windows PowerShell 执行 `windows/build.ps1` 生成独立 EXE / ZIP。手动版无需 OCR 语言包或 UIA 依赖，详见 [Windows 说明](windows/README.md)。
+## 功能与边界
 
-跨平台导出检查：
+- 不读取微信数据库、登录信息、Token 或 Cookie。
+- 不注入或 Hook 微信进程。
+- 文字优先读取 macOS Accessibility；不可用时使用 Apple Vision 本地 OCR。
+- 屏幕权限通过 ScreenCaptureKit 注册，用途仅限用户主动打开的微信记录窗口。
+- 自动保存仅操作已打开记录的可见附件菜单，不打开执行文档。微信隐藏菜单、过期或未下载的附件可能需要手动另存并补充。
+- 优先另存原附件；图片复制路径保留微信放入剪贴板的图像像素，重新编码为 PNG，不保证与最初上传文件逐字节一致。
+- 微信消息下方的灰色回复原文会输出为 Markdown `>` 引用块。
+- 每个 Markdown 开头都会向 LLM 说明正文样式与引用样式，避免把被引用原消息理解为当前消息。
+- Markdown 只为已经实际保存的文件生成链接，缺失附件会列明，不用截图冒充照片、视频或文档原文件。
+- 自动滚动会把微信置于前台，并短暂移动鼠标指针。
+- Mac 最多读取 120 屏，Windows 最多 100 屏；触及上限时在 Markdown 文末提示。
 
-```bash
-python3 -m unittest discover -s windows/tests -v
-python3 windows/app.py --self-test
-```
+## 文档维护
 
-## 安全与维护
-
-- 仅在用户点击“粘贴”或系统粘贴时获取文字，不监听剪贴板。
-- 只复制用户选择的本地文件，不执行附件，不上传内容。
-- 不读取微信数据库、登录信息、Token 或 Cookie，不注入 / Hook 微信。
-- 历史自动捕获源码保留供追溯，当前主界面不调用窗口 / OCR 流程。
-
-本文件维护使用、构建和边界；架构见 `PROJECT_INTRODUCTION.md`，Windows 操作见 `windows/README.md`，验证按日期追加到 `log.md`。历史发布文档不视为当前使用说明。
+本文件维护安装、操作与使用边界；Windows 的依赖和构建步骤维护在 `windows/README.md`，架构见 `PROJECT_INTRODUCTION.md`，验证记录按日期追加到 `log.md`。

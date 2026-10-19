@@ -17,20 +17,14 @@ struct ExtractionPipeline {
             throw ExtractionError.permissionMissing
         }
         let target = try await captureService.locateWeChatWindow()
-        CaptureDiagnostics.record("start pid=\(target.application.processID) window=\(target.window.windowID) frame=\(target.window.frame)")
-        let workspace = try ArchiveWorkspace(parent: outputDirectory)
-        let collector = AttachmentCollector(directory: workspace.directory)
-        var completed = false
-        var incompleteReason = "提取未完成或已停止，已保存的附件保留在本目录。"
-        defer {
-            if !completed { workspace.writeIncomplete(incompleteReason) }
-        }
-        do {
+        let collector = try AttachmentCollector()
+        defer { collector.cleanUp() }
+
         progress("正在回到记录顶部…")
         var topDigest: String?
         for _ in 0..<60 {
             try Task.checkCancellation()
-            try await captureService.activateAndScroll(target: target, delta: 1_800)
+            await captureService.activateAndScroll(target: target, delta: 1_800)
             let digest = frameDigest(try await captureService.capture(target))
             if digest == topDigest { break }
             topDigest = digest
@@ -52,11 +46,7 @@ struct ExtractionPipeline {
             }
             previousDigest = digest
 
-            let detector = MediaRegionDetector()
-            let mediaRegions = detector.regions(in: image)
-            CaptureDiagnostics.record("page=\(index) regions=\(mediaRegions.count) dimensions=\(image.width)x\(image.height)")
-            let textImage = detector.masking(image, regions: mediaRegions)
-            let lines = try await ocrService.recognize(textImage)
+            let lines = try await ocrService.recognize(image)
             pageLines.append(lines)
             let accessibilityText = accessibilityService.visibleText(
                 processID: target.application.processID,
@@ -65,9 +55,9 @@ struct ExtractionPipeline {
             accessibilityPages.append(processor.visibleAccessibilityText(accessibilityText, matching: lines))
 
             progress("正在保存第 \(index + 1) 屏的附件…")
-            try await collector.collect(target: target, lines: lines, regions: mediaRegions, pageIndex: index)
+            try await collector.collect(target: target, lines: lines, regions: processor.mediaRegions(in: image))
 
-            try await captureService.activateAndScroll(target: target, delta: -Int32(target.window.frame.height * 0.55))
+            await captureService.activateAndScroll(target: target, delta: -Int32(target.window.frame.height * 0.55))
         }
 
         let ocrLines = processor.mergePages(pageLines)
@@ -86,7 +76,7 @@ struct ExtractionPipeline {
 
         progress("正在生成 Markdown…")
         try Task.checkCancellation()
-        let report = try exporter.export(
+        return try exporter.export(
             lines: chosen.lines,
             attachments: [],
             fileNames: fileNames,
@@ -94,22 +84,9 @@ struct ExtractionPipeline {
             pages: pageLines.count,
             usedAccessibility: chosen.usedAccessibility,
             sourceFiles: sourceFiles + collector.files,
-            attachmentPositions: collector.positions,
             attachmentWarnings: warnings,
-            existingDirectory: workspace.directory,
             to: outputDirectory
         )
-        completed = true
-        return report
-        } catch {
-            incompleteReason = Self.failureDescription(for: error)
-            throw error
-        }
-    }
-
-    static func failureDescription(for error: Error) -> String {
-        error is CancellationError ? "已停止提取；聊天记录未完成，已保存附件保留在本目录。"
-            : "提取失败：\(error.localizedDescription) 已保存附件保留在本目录。"
     }
 
     private func frameDigest(_ image: CGImage) -> String {

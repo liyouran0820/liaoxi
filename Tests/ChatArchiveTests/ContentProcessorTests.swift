@@ -2,46 +2,6 @@ import XCTest
 @testable import ChatArchive
 
 final class ContentProcessorTests: XCTestCase {
-    func testHeaderAndOCRNicknameDoNotDuplicateMessages() {
-        let first = ["●", "Alice和Bob的聊天记录", "••●", "Alice01", "2026年10月18日 22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件"]
-        let second = ["Alice和Bob的聊天记录", "•••", "Alice0l", "2026年10月18日22:44", "请先保存全部原始附件", "Alice01", "2026年10月18日 22:45", "然后检查目录里的文件", "Bob", "2026年10月18日 22:46", "这是下一条消息"]
-        let third = ["Alice和Bob的聊天记录", "•••", "Bob", "2026年10月18日 22:46", "这是下一条消息", "Alice01", "2026年10月18日 22:47", "请先保存全部原始附件", "👍"]
-        let result = ContentProcessor().mergeAccessibilityPages([first, second, third])
-        XCTAssertEqual(result, Array(first.dropFirst(3)) + Array(second.suffix(3)) + Array(third.suffix(4)))
-        XCTAssertEqual(result.filter { $0 == "请先保存全部原始附件" }.count, 2)
-        let ocr = [first, second, third].map { $0.map { RecognizedLine(text: $0, bounds: .zero, confidence: 1) } }
-        XCTAssertEqual(ContentProcessor().mergePages(ocr), result)
-    }
-
-    func testOverlapKeepsNewlyVisibleLineAndDistinctTimes() {
-        let first = ["Alice01", "2026年10月18日 22:44", "请先保存全部原始附件", "然后检查目录里的文件"]
-        let second = ["Alice0l", "2026年10月18日22:44", "请先保存全部原始附件", "中间新识别到的内容", "然后检查目录里的文件", "结束"]
-        XCTAssertEqual(PageOverlap.merge(first, second), Array(first.prefix(3)) + ["中间新识别到的内容", "然后检查目录里的文件", "结束"])
-        let later = ["Alice01", "2026年10月18日 22:45", "请先保存全部原始附件", "然后检查目录里的文件", "新消息"]
-        XCTAssertEqual(PageOverlap.merge(first, later), first + later)
-    }
-
-    func testBodyHeadingAndEmojiArePreservedOutsideTitleBar() {
-        let page = [RecognizedLine(text: "某人的聊天记录", bounds: CGRect(x: 0.1, y: 0.4, width: 0.5, height: 0.03), confidence: 1),
-                    RecognizedLine(text: "👍", bounds: CGRect(x: 0.1, y: 0.3, width: 0.1, height: 0.03), confidence: 1)]
-        XCTAssertEqual(ContentProcessor().mergePages([page]), ["某人的聊天记录", "👍"])
-        XCTAssertEqual(PageOverlap.merge(["👍"], ["👎"]), ["👍", "👎"])
-    }
-
-    func testCorruptedSenderAndClippedTimeUseAlignedContext() {
-        let first = ["Alice01", "2026年10月18日 22:47", "请先保存全部原始附件", "Bob", "2026年10月18日 22:48", "然后检查目录里的文件"]
-        let next = ["TayToTK", "2020年10月18日 22:4/", "请先保存全部原始附件", "Bob", "2026年10月18日 22:48", "然后检查目录里的文件", "新增消息"]
-        XCTAssertEqual(PageOverlap.merge(first, next), first + ["新增消息"])
-    }
-
-    func testSimilarCommandsAreNotOCRNicknameDuplicates() {
-        let first = ["共同上下文第一行内容", "共同上下文第二行内容", "共同上下文第三行内容", "run --level=1"]
-        let second = ["共同上下文第一行内容", "共同上下文第二行内容", "共同上下文第三行内容", "run --level=2", "结束"]
-        let merged = PageOverlap.merge(first, second)
-        XCTAssertTrue(merged.contains("run --level=1"))
-        XCTAssertTrue(merged.contains("run --level=2"))
-    }
-
     func testMergesOverlappingOCRPages() {
         let processor = ContentProcessor()
         let pageOne = [
@@ -170,19 +130,15 @@ final class ContentProcessorTests: XCTestCase {
                                                  sourceFiles: sources.map(\.0) + [collision, sources[0].0], to: parent)
         let folder = report.markdownURL.deletingLastPathComponent()
         let outputNames = try FileManager.default.contentsOfDirectory(atPath: folder.path)
-        XCTAssertEqual(Set(outputNames), Set([report.markdownURL.lastPathComponent, "photo #1.png", "video.mp4", "conversation.md", "plan.pdf", "plan-2.pdf"]))
-        XCTAssertEqual(report.markdownURL.deletingPathExtension().lastPathComponent, folder.lastPathComponent)
+        XCTAssertEqual(Set(outputNames), Set(["conversation.md", "photo #1.png", "video.mp4", "conversation-2.md", "plan.pdf", "plan-2.pdf"]))
         XCTAssertFalse(outputNames.contains("attachments"))
         for (url, data) in sources {
-            let name = url.lastPathComponent
+            let name = url.lastPathComponent == "conversation.md" ? "conversation-2.md" : url.lastPathComponent
             XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent(name)), data)
         }
         let md = try String(contentsOf: report.markdownURL, encoding: .utf8)
         XCTAssertTrue(md.contains("(photo%20%231.png)"))
         XCTAssertTrue(md.contains("(video.mp4)"))
-        XCTAssertTrue(md.contains("[照片：photo #1.png]".replacingOccurrences(of: "#", with: "\\#")))
-        XCTAssertTrue(md.contains("[视频：video.mp4]"))
-        XCTAssertFalse(md.contains("!["))
         XCTAssertEqual(report.imageCount, 1)
         XCTAssertEqual(report.videoCount, 1)
         XCTAssertEqual(report.fileCount, 3)

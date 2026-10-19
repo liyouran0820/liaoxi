@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import CoreGraphics
 import Foundation
 import ScreenCaptureKit
@@ -22,8 +21,9 @@ struct WindowCaptureService {
         let pids = Set(apps.map(\.processID))
         let candidates = content.windows.filter { window in
             guard let app = window.owningApplication, pids.contains(app.processID) else { return false }
+            let title = (window.title ?? "").lowercased()
             return window.isOnScreen && window.frame.width >= 420 && window.frame.height >= 360
-                && ChatWindowSelector.isMergedRecordTitle(window.title ?? "")
+                && (title.contains("聊天记录") || title.contains("chat history"))
         }
 
         let ranked = candidates.sorted { lhs, rhs in
@@ -35,113 +35,29 @@ struct WindowCaptureService {
         return CapturableWindow(window: window, application: application)
     }
 
-    @MainActor
     func capture(_ target: CapturableWindow) async throws -> CGImage {
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.application.processID else {
-            throw VisibleCaptureError.notForeground
-        }
-        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-        let frame = target.window.frame
-        guard let current = content.windows.first(where: { $0.windowID == target.window.windowID }),
-              current.owningApplication?.processID == target.application.processID,
-              let display = content.displays.first(where: { $0.frame.contains(frame) }) else { throw VisibleCaptureError.unavailable }
-        guard VisibleCaptureGuard.sameRecord(expectedTitle: target.window.title, currentTitle: current.title) else {
-            throw VisibleCaptureError.wrongContent
-        }
-        let visibleTarget = VisibleWindowInfo(id: target.window.windowID, owner: target.application.processID, frame: frame)
-        do {
-            try VisibleCaptureGuard.validate(target: visibleTarget, display: display.frame, windows: VisibleCaptureGuard.windowList())
-        } catch {
-            CaptureDiagnostics.record("visible-capture-rejected-before reason=\(String(describing: error))")
-            throw error
-        }
-
-        // Capture composited display pixels, not the blank backing surface returned by this WeChat window.
-        // The image is bounded to the authorized record rectangle. Reject covering windows before AND after capture.
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        let filter = SCContentFilter(desktopIndependentWindow: target.window)
         let configuration = SCStreamConfiguration()
-        let scale = max(2, CGFloat(filter.pointPixelScale))
-        configuration.sourceRect = frame.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
-        configuration.width = max(1, Int(frame.width * scale))
-        configuration.height = max(1, Int(frame.height * scale))
+        let scale = bestScaleFactor(for: target.window.frame)
+        configuration.width = max(1, Int(target.window.frame.width * scale))
+        configuration.height = max(1, Int(target.window.frame.height * scale))
         configuration.showsCursor = false
-        configuration.ignoreShadowsDisplay = true
         configuration.captureResolution = .best
         configuration.colorSpaceName = CGColorSpace.sRGB
 
         do {
-            let image: CGImage
-            if #available(macOS 15.2, *) {
-                // This API accepts the exact global screen rectangle, without display-relative crop conversion.
-                image = try await SCScreenshotManager.captureImage(in: frame)
-            } else {
-                image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
-            }
-            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.application.processID else {
-                throw VisibleCaptureError.notForeground
-            }
-            try VisibleCaptureGuard.validate(target: visibleTarget, display: display.frame, windows: VisibleCaptureGuard.windowList())
-            let xScale = CGFloat(image.width) / frame.width, yScale = CGFloat(image.height) / frame.height
-            guard xScale >= 0.9, abs(xScale - yScale) < 0.02 else { throw ExtractionError.captureFailed }
-            guard VisibleCaptureGuard.hasPixelVariation(image) else { throw VisibleCaptureError.blank }
-            // Native window identity + geometry is authoritative. An OCR nickname is not a capture prerequisite.
-            let after = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-            guard let verified = after.windows.first(where: { $0.windowID == target.window.windowID }),
-                  verified.owningApplication?.processID == target.application.processID,
-                  VisibleCaptureGuard.sameRecord(expectedTitle: target.window.title, currentTitle: verified.title) else {
-                throw VisibleCaptureError.wrongContent
-            }
-            CaptureDiagnostics.record("visible-region-captured dimensions=\(image.width)x\(image.height) native-identity=verified")
-            return image
-        } catch let error as VisibleCaptureError {
-            CaptureDiagnostics.record("visible-capture-rejected-after reason=\(String(describing: error))")
-            throw error
-        } catch is CancellationError {
-            throw CancellationError()
+            return try await SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: configuration
+            )
         } catch {
-            let nsError = error as NSError
-            CaptureDiagnostics.record("visible-capture-failed domain=\(nsError.domain) code=\(nsError.code)")
             throw ExtractionError.captureFailed
         }
     }
 
-    func captureVisibleRegion(target: CapturableWindow, rect: CGRect) async throws -> (image: CGImage, frame: CGRect) {
-        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-        guard let display = content.displays.first(where: { $0.frame.contains(CGPoint(x: rect.midX, y: rect.midY)) })
-            ?? content.displays.first(where: { $0.frame.intersects(rect) }) else { throw ExtractionError.captureFailed }
-        let clipped = rect.intersection(display.frame)
-        let filter = SCContentFilter(display: display, including: [target.application], exceptingWindows: [])
-        let config = SCStreamConfiguration()
-        config.sourceRect = clipped.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
-        config.width = max(1, Int(clipped.width * 2))
-        config.height = max(1, Int(clipped.height * 2))
-        config.showsCursor = false
-        config.ignoreShadowsDisplay = true
-        return (try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config), clipped)
-    }
-
-    @MainActor
-    func activateAndScroll(target: CapturableWindow, delta: Int32) async throws {
+    func activateAndScroll(target: CapturableWindow, delta: Int32) async {
         if let app = NSRunningApplication(processIdentifier: target.application.processID) {
-            app.activate(options: [])
-        }
-        let root = AXUIElementCreateApplication(target.application.processID)
-        var value: CFTypeRef?
-        AXUIElementCopyAttributeValue(root, kAXWindowsAttribute as CFString, &value)
-        guard let windows = value as? [AXUIElement], let selected = windows.first(where: { window in
-            var title: CFTypeRef?
-            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title)
-            return (title as? String) == target.window.title
-        }) else {
-            CaptureDiagnostics.record("raise-failed AX-window-not-found pid=\(target.application.processID)")
-            throw ExtractionError.noSuitableWindow
-        }
-        AXUIElementPerformAction(selected, kAXRaiseAction as CFString)
-        AXUIElementSetAttributeValue(root, kAXFocusedWindowAttribute as CFString, selected)
-        try await Task.sleep(nanoseconds: 200_000_000)
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.application.processID else {
-            CaptureDiagnostics.record("raise-failed front=\(NSWorkspace.shared.frontmostApplication?.processIdentifier ?? 0) target=\(target.application.processID)")
-            throw ExtractionError.noSuitableWindow
+            app.activate(options: [.activateAllWindows])
         }
         let location = CGPoint(x: target.window.frame.midX, y: target.window.frame.midY)
         let move = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: location, mouseButton: .left)
@@ -149,7 +65,7 @@ struct WindowCaptureService {
         let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: delta, wheel2: 0, wheel3: 0)
         event?.location = location
         event?.post(tap: .cghidEventTap)
-        try await Task.sleep(nanoseconds: 650_000_000)
+        try? await Task.sleep(nanoseconds: 450_000_000)
     }
 
     private func score(_ window: SCWindow) -> Double {
