@@ -10,7 +10,27 @@ struct CapturableWindow {
 }
 
 struct WindowCaptureService {
+    @MainActor
     func locateWeChatWindow() async throws -> CapturableWindow {
+        // Bringing an application forward is asynchronous, particularly after restart / Stage Manager transitions.
+        // Do this before taking the ScreenCaptureKit window snapshot, not after retaining stale coordinates.
+        let running = NSRunningApplication.runningApplications(withBundleIdentifier: "com.tencent.xinWeChat")
+        if running.count == 1 {
+            running[0].activate(options: [.activateAllWindows])
+            try await Task.sleep(nanoseconds: 600_000_000)
+        }
+        var lastError: Error = ExtractionError.noSuitableWindow
+        for attempt in 0..<6 {
+            try Task.checkCancellation()
+            do { return try await locateVisibleWeChatWindow() }
+            catch { lastError = error }
+            CaptureDiagnostics.record("locate-retry attempt=\(attempt)")
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        throw lastError
+    }
+
+    private func locateVisibleWeChatWindow() async throws -> CapturableWindow {
         let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         let apps = content.applications.filter { app in
             let name = app.applicationName.lowercased()
@@ -27,6 +47,7 @@ struct WindowCaptureService {
             guard let app = window.owningApplication, pids.contains(app.processID) else { return false }
             return window.isOnScreen && window.frame.width >= 420 && window.frame.height >= 360
                 && ChatWindowSelector.isMergedRecordTitle(window.title ?? "")
+                && ChatWindowSelector.isOnConnectedDisplay(window.frame, displays: content.displays.map(\.frame))
         }
 
         let ranked = candidates.sorted { lhs, rhs in
@@ -111,13 +132,22 @@ struct WindowCaptureService {
             app.activate(options: [])
         }
         let root = AXUIElementCreateApplication(target.application.processID)
-        var value: CFTypeRef?
-        AXUIElementCopyAttributeValue(root, kAXWindowsAttribute as CFString, &value)
-        guard let windows = value as? [AXUIElement], let selected = windows.first(where: { window in
-            var title: CFTypeRef?
-            AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title)
-            return (title as? String) == target.window.title
-        }) else {
+        var selected: AXUIElement?
+        for _ in 0..<12 {
+            try Task.checkCancellation()
+            var value: CFTypeRef?
+            AXUIElementCopyAttributeValue(root, kAXWindowsAttribute as CFString, &value)
+            if let windows = value as? [AXUIElement] {
+                selected = windows.first(where: { window in
+                    var title: CFTypeRef?
+                    AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title)
+                    return (title as? String) == target.window.title
+                })
+            }
+            if selected != nil { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard let selected else {
             CaptureDiagnostics.record("raise-failed AX-window-not-found pid=\(target.application.processID)")
             throw ExtractionError.noSuitableWindow
         }

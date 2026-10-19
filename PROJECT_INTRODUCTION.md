@@ -6,7 +6,7 @@
 
 ## 技术路径
 
-- `WindowCaptureService`：用 ScreenCaptureKit 定位和捕获微信可见窗口，驱动滚动。
+- `WindowCaptureService`：先激活微信并等待窗口列表稳定，再用 ScreenCaptureKit 定位当前显示器上的合并记录，捕获并驱动滚动；排除离屏旧坐标，等待对应 AX 窗口就绪。
 - `CaptureQuality`：排除纯色 / 全透明的窗口内容画面，捕获失败时有限重试并使用仅含目标窗口的显示器过滤，不扩大到桌面或其他应用；像素校验不等同于 OCR 内容完整性。
 - `AccessibilityTextService`：读取微信窗口暴露的辅助功能文本。
 - `OCRService`：以 Apple Vision 在本机识别中英文。

@@ -3,6 +3,14 @@ import XCTest
 @testable import ChatArchive
 
 final class CaptureRecoveryTests: XCTestCase {
+    func testDetachedDisplayCoordinatesAreNotSelected() {
+        let main = CGRect(x: 0, y: 0, width: 1280, height: 832)
+        let parked = CGRect(x: -2586, y: 101, width: 560, height: 720)
+        XCTAssertFalse(ChatWindowSelector.isOnConnectedDisplay(parked, displays: [main]))
+        XCTAssertTrue(ChatWindowSelector.isOnConnectedDisplay(CGRect(x: 455, y: 101, width: 560, height: 720), displays: [main]))
+        XCTAssertTrue(ChatWindowSelector.isOnConnectedDisplay(parked, displays: [main, CGRect(x: -2732, y: 0, width: 2732, height: 1800)]))
+    }
+
     @MainActor
     private func fixture(color: NSColor, drawMessages: Bool = false) throws -> CGImage {
         let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 560, pixelsHigh: 720,
