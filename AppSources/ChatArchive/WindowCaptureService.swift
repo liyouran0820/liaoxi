@@ -35,23 +35,68 @@ struct WindowCaptureService {
         return CapturableWindow(window: window, application: application)
     }
 
+    @MainActor
     func capture(_ target: CapturableWindow) async throws -> CGImage {
-        let filter = SCContentFilter(desktopIndependentWindow: target.window)
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.application.processID else {
+            throw VisibleCaptureError.notForeground
+        }
+        let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+        let frame = target.window.frame
+        guard let current = content.windows.first(where: { $0.windowID == target.window.windowID }),
+              current.owningApplication?.processID == target.application.processID,
+              let display = content.displays.first(where: { $0.frame.contains(frame) }) else { throw VisibleCaptureError.unavailable }
+        let visibleTarget = VisibleWindowInfo(id: target.window.windowID, owner: target.application.processID, frame: frame)
+        do {
+            try VisibleCaptureGuard.validate(target: visibleTarget, display: display.frame, windows: VisibleCaptureGuard.windowList())
+        } catch {
+            CaptureDiagnostics.record("visible-capture-rejected-before reason=\(String(describing: error))")
+            throw error
+        }
+
+        // Capture composited display pixels, not the blank backing surface returned by this WeChat window.
+        // The image is bounded to the authorized record rectangle. Reject covering windows before AND after capture.
+        let filter = SCContentFilter(display: display, excludingWindows: [])
         let configuration = SCStreamConfiguration()
-        let scale = bestScaleFactor(for: target.window.frame)
-        configuration.width = max(1, Int(target.window.frame.width * scale))
-        configuration.height = max(1, Int(target.window.frame.height * scale))
+        let scale = max(2, CGFloat(filter.pointPixelScale))
+        configuration.sourceRect = frame.offsetBy(dx: -display.frame.minX, dy: -display.frame.minY)
+        configuration.width = max(1, Int(frame.width * scale))
+        configuration.height = max(1, Int(frame.height * scale))
         configuration.showsCursor = false
-        configuration.ignoreShadowsSingleWindow = true
+        configuration.ignoreShadowsDisplay = true
         configuration.captureResolution = .best
         configuration.colorSpaceName = CGColorSpace.sRGB
 
         do {
-            return try await SCScreenshotManager.captureImage(
+            let image = try await SCScreenshotManager.captureImage(
                 contentFilter: filter,
                 configuration: configuration
             )
+            guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.application.processID else {
+                throw VisibleCaptureError.notForeground
+            }
+            try VisibleCaptureGuard.validate(target: visibleTarget, display: display.frame, windows: VisibleCaptureGuard.windowList())
+            guard image.width == configuration.width, image.height == configuration.height else { throw ExtractionError.captureFailed }
+            guard VisibleCaptureGuard.hasPixelVariation(image) else { throw VisibleCaptureError.blank }
+            // Validate just the title band, never photo contents, before sending the full image to chat OCR.
+            let headerHeight = min(image.height, Int(72 * scale))
+            guard let header = image.cropping(to: CGRect(x: 0, y: 0, width: image.width, height: headerHeight)) else {
+                throw VisibleCaptureError.wrongContent
+            }
+            let headerLines = try await OCRService().recognize(header)
+            guard VisibleCaptureGuard.headerMatches(expected: target.window.title ?? "", recognized: headerLines.map(\.text)) else {
+                CaptureDiagnostics.record("visible-capture-header-mismatch")
+                throw VisibleCaptureError.wrongContent
+            }
+            CaptureDiagnostics.record("visible-region-captured dimensions=\(image.width)x\(image.height)")
+            return image
+        } catch let error as VisibleCaptureError {
+            CaptureDiagnostics.record("visible-capture-rejected-after reason=\(String(describing: error))")
+            throw error
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
+            let nsError = error as NSError
+            CaptureDiagnostics.record("visible-capture-failed domain=\(nsError.domain) code=\(nsError.code)")
             throw ExtractionError.captureFailed
         }
     }
