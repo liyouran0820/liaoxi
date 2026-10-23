@@ -2,7 +2,7 @@
 
 ## 当前版本基线
 
-2026-10-20 按用户要求恢复 GitHub 发布标签 `v0.2.0`（`31a0f77`）的程序源码、测试与 Windows 依赖。后续实验保存在 `codex/before-release-rollback-20261020`，不进入当前应用。保留历史日志、发布说明与发布工作流用于追溯；回滚与签名 / 启动检查不等同于已重新验收微信识别。
+2026-10-20 按用户要求恢复 GitHub 发布标签 `v0.2.0`（`31a0f77`）的程序源码、测试与 Windows 依赖。2026-10-23 只追加 Mac 滚动修复：精确激活原记录、实时几何、分段滚轮、重试与末尾探测，并避免附件菜单缺失时 Esc 关闭记录。截图、OCR 和文字合并保留 v0.2.0 的实现，Windows 未改动。历史实验保存在 `codex/before-release-rollback-20261020`，原基线另存 `codex/before-scroll-fix-20261023`；签名 / 构建与单测不代表实机识别验收。
 
 ## 产品目标
 
@@ -11,6 +11,7 @@
 ## 技术路径
 
 - `WindowCaptureService`：用 ScreenCaptureKit 定位和捕获微信可见窗口，驱动滚动。
+- `ScrollSupport`：纯函数滚动位置 / 分段计划、窗口 ID 与进程校验、边界判定和本地元数据诊断；窗口失效或焦点异常时停止，重复帧本身不作为到底依据。
 - `AccessibilityTextService`：读取微信窗口暴露的辅助功能文本。
 - `OCRService`：以 Apple Vision 在本机识别中英文。
 - `ContentProcessor`：跨屏去重、文字源选择、灰色回复引用识别、图片候选裁切和文件名识别。

@@ -74,7 +74,10 @@ final class AttachmentCollector {
                 let title = string($0, kAXTitleAttribute) ?? ""
                 return ["复制", "複製", "Copy", "复制图片", "Copy Image"].contains(title)
             }) else {
-                key(53)
+                // Qt may expose no popup at all. Escape then closes the record itself and breaks scrolling.
+                // A single click on the title's blank centre dismisses a popup without closing the record.
+                click(CGPoint(x: target.window.frame.midX, y: target.window.frame.minY + 52), button: .left)
+                ScrollDiagnostics.record("attachment-menu-unavailable dismissed-without-escape")
                 continue
             }
             let board = NSPasteboard.general
